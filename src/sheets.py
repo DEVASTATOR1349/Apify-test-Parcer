@@ -11,8 +11,6 @@ from typing import Any
 import requests
 from loguru import logger
 
-from urllib.parse import urlparse, urlunparse
-
 from config import APPS_SCRIPT_URL, GOOGLE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
 
 
@@ -59,6 +57,10 @@ def _fetch_viz_data(gid: int = 0) -> dict | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Чтение «БазыКлиентов»
+# ---------------------------------------------------------------------------
+
 def read_links_sheet() -> list[dict[str, Any]]:
     """
     Читает «БазуКлиентов» (gid=21085774) через Google Visualization API.
@@ -83,11 +85,10 @@ def read_links_sheet() -> list[dict[str, Any]]:
         logger.warning("Нет данных в «БазеКлиентов»")
         return []
 
-    # Группируем: Клиент → [ссылки]
     projects: dict[str, list[str]] = {}
     skipped_sources: set[str] = set()
 
-    for row in rows[1:]:  # пропускаем заголовок
+    for row in rows[1:]:
         vals = [c.get("v") if c else None for c in row["c"]]
         client = (vals[0] or "").strip()
         source = (vals[1] or "").strip()
@@ -98,7 +99,6 @@ def read_links_sheet() -> list[dict[str, Any]]:
         if not url.startswith(("http://", "https://")):
             continue
 
-        # Проверяем что источник — известная платформа
         platform_key = SOURCE_NAME_MAP.get(source)
         if not platform_key:
             skipped_sources.add(source)
@@ -123,71 +123,11 @@ def read_links_sheet() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Батч-запись (один POST на всё)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# URL-нормализация и маппинг колонок «Статистики»
-# ---------------------------------------------------------------------------
-
-def normalize_url(url: str) -> str:
-    """
-    Нормализует URL для сопоставления.
-    - нижний регистр
-    - http → https
-    - убирает www.
-    - убирает query-параметры и fragment
-    - убирает trailing slash
-    """
-    parsed = urlparse(url.lower())
-    netloc = parsed.netloc.replace("www.", "")
-    path = parsed.path.rstrip("/")
-    # Всегда https для единообразия (на http редиректит)
-    return urlunparse(("https", netloc, path, "", "", ""))
-
-
-def build_stats_columns() -> dict[str, int]:
-    """
-    Читает заголовки листа «Статистика» (gid=0) и строит карту
-    {нормализованный_URL → индекс_колонки (0-based, как в Google Sheets)}.
-    """
-    import json
-
-    raw = _fetch_viz_data(gid=0)
-    if not raw:
-        logger.error("Не удалось прочитать Статистику")
-        return {}
-
-    data = json.loads(raw)
-    cols = data.get("table", {}).get("cols", [])
-
-    col_map: dict[str, int] = {}
-    skipped = 0
-    for i, col in enumerate(cols):
-        label = col.get("label", "")
-        if not label:
-            skipped += 1
-            continue
-        # Первый токен — URL
-        parts = label.split(" ")
-        url = parts[0]
-        if not url.startswith(("http://", "https://")):
-            skipped += 1
-            continue
-        key = normalize_url(url)
-        if key:
-            col_map[key] = i
-
-    logger.info(f"Колонок Статистики: {len(cols)}, сопоставлено URL: {len(col_map)}, пропущено: {skipped}")
-    return col_map
-
-
-# ---------------------------------------------------------------------------
-# Батч-запись (один POST на всё)
+# Батч-запись результатов
 # ---------------------------------------------------------------------------
 
 def write_results(results: list[dict[str, Any]]):
-    """Пишет результаты в лист «Статистика (raw)» плоскими строками."""
+    """Пишет результаты в лист «Статистика SQL» (Дата, Клиент, Площадка, Подписчиков)."""
     if not results:
         logger.info("Нет данных для записи")
         return
@@ -201,44 +141,19 @@ def write_results(results: list[dict[str, Any]]):
         ]
         for r in results
     ]
-    ok = _post({
-        "type": "batch_write",
-        "tabs": ["Статистика (raw)"],
-        "rows": rows,
-    })
+    ok = _post({"type": "batch_write", "rows": rows})
     if ok:
-        logger.info(f"Батч записан: {len(rows)} строк в «Статистика (raw)»")
+        logger.info(f"Записано: {len(rows)} строк в «Статистика SQL»")
     else:
-        logger.error(f"Не удалось записать батч из {len(rows)} строк")
-
-
-def write_stats_matrix(date: str, column_fills: list[tuple[int, int]]):
-    """
-    Пишет значения в лист «Статистика» (матрица: колонка = площадка, строка = дата).
-    column_fills: [(col_index, followers_value), ...]
-    """
-    if not column_fills:
-        return
-
-    ok = _post({
-        "type": "matrix_write",
-        "tab": "Статистика",
-        "date": date,
-        "cells": [[ci, fv] for ci, fv in column_fills],
-    })
-    if ok:
-        logger.info(f"Матрица записана: {len(column_fills)} ячеек в «Статистику»")
-    else:
-        logger.error(f"Не удалось записать матрицу ({len(column_fills)} ячеек)")
+        logger.error(f"Не удалось записать {len(rows)} строк")
 
 
 def log_errors_batch(errors: list[dict[str, str]]):
-    """Пишет все ошибки одним POST в лист 'Ошибки'."""
+    """Пишет ошибки одним POST в лист «Ошибки»."""
     if not errors:
         return
     ok = _post({
         "type": "batch_errors",
-        "tab": "Ошибки",
         "rows": [
             [e["date"], e["client"], e["link"], e["error"]]
             for e in errors
@@ -251,11 +166,11 @@ def log_errors_batch(errors: list[dict[str, str]]):
 
 
 # ---------------------------------------------------------------------------
-# Старый интерфейс (оставлен для обратной совместимости)
+# Старый интерфейс (для совместимости)
 # ---------------------------------------------------------------------------
 
 def log_error(client: str, link: str, error: str):
-    """Однострочная запись ошибки (используй log_errors_batch для массовой)."""
+    """Однострочная запись ошибки."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _post({
         "type": "error",
@@ -265,16 +180,3 @@ def log_error(client: str, link: str, error: str):
         "error": error[:200],
     })
     logger.warning(f"Ошибка записана: {client} / {error[:100]}")
-
-
-def ensure_result_sheets():
-    """Проверяет создание листов (через тестовую запись)."""
-    _post({
-        "type": "write",
-        "tab": "Статистика (raw)",
-        "date": "__init__",
-        "client": "__init__",
-        "platform": "__init__",
-        "followers": "__init__",
-    })
-    logger.info("Инициализация листов выполнена")
