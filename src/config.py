@@ -34,8 +34,8 @@ REQUEST_DELAY = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
 # === Листы в Google Sheets ===
 # Лист «БазаКлиентов»: 3 колонки (Клиент, Источник, ссылка)
 SHEET_LINKS_GID = 21085774
-# Лист куда пишем строчные данные
-SHEET_RESULTS_TAB = "Статистика (raw)"
+# Лист куда пишем результаты
+SHEET_RESULTS_TAB = "ДанныеПарсинга"
 # Лист для лога ошибок
 SHEET_ERRORS_TAB = "Ошибки"
 

@@ -39,7 +39,7 @@ function handleBatchWrite(data) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const tabName = data.tab || "Статистика новая";
+  const tabName = data.tab || "ДанныеПарсинга";
 
   let sheet = ss.getSheetByName(tabName);
   if (!sheet) {
