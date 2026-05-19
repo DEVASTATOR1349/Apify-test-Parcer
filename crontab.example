@@ -1,0 +1,2 @@
+# Ежедневный запуск парсера в 8:00 по Москве (UTC+3 → 5:00 UTC)
+0 5 * * * cd /root/apify-parser && /usr/bin/python3 src/main.py >> logs/cron.log 2>&1
