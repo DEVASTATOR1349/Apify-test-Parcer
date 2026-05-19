@@ -11,7 +11,7 @@ from typing import Any
 import requests
 from loguru import logger
 
-from config import APPS_SCRIPT_URL, GOOGLE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
+from config import APPS_SCRIPT_URL, SOURCE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
 
 
 def _post(data: dict) -> bool:
@@ -40,7 +40,7 @@ def _post(data: dict) -> bool:
 def _fetch_viz_data(gid: int = 0) -> dict | None:
     """Читает данные через Google Visualization API (работает без авторизации)."""
     url = (
-        f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}"
+        f"https://docs.google.com/spreadsheets/d/{SOURCE_SHEET_ID}"
         f"/gviz/tq?tqx=out:json&gid={gid}"
     )
     try:

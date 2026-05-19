@@ -22,7 +22,10 @@ TEST_MODE = os.getenv("TEST_MODE", "").lower() in ("1", "true", "yes")
 
 # === Apps Script (Google Sheets bridge) ===
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+# Таблица-источник (читаем «БазуКлиентов»)
+SOURCE_SHEET_ID = os.getenv("SOURCE_SHEET_ID", "1j98FzWldWKJmnn22QNuTsraMMwhVMRijemsEOif8RI0")
+# Таблица-приёмник (пишем результаты + ошибки)
+TARGET_SHEET_ID = os.getenv("TARGET_SHEET_ID", "10S1xijZ4ZNXVB4JQKyBylFmc7N_jwazHKSTc9pNj-t8")
 
 # === Парсер ===
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
