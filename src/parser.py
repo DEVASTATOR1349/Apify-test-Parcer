@@ -207,7 +207,15 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
         username = _extract_tiktok_username(url)
         if not username:
             return None
-        return {"profiles": [username]}
+        return {
+            "profiles": [username],
+            "shouldDownloadCovers": False,
+            "shouldDownloadSlideshowImages": False,
+            "shouldDownloadSubtitles": False,
+            "shouldDownloadVideos": False,
+            "maxPosts": 1,          # не скрейпим все видео, только 1
+            "resultsPerPage": 1,
+        }
 
     if actor_name == "apify/facebook-pages-scraper":
         if "profile.php" in url:
