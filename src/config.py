@@ -14,6 +14,9 @@ APIFY_API_TOKEN_BACKUP = os.getenv("APIFY_API_TOKEN_BACKUP")
 VK_API_KEY = os.getenv("VK_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
+# === Прокси для Playwright (Facebook) ===
+FB_PROXY = os.getenv("FB_PROXY", "")
+
 # === Режим ===
 TEST_MODE = os.getenv("TEST_MODE", "").lower() in ("1", "true", "yes")
 
@@ -52,7 +55,7 @@ PLATFORM_ACTORS = {
         "field": "members_count",
     },
     "facebook.com": {
-        "actor": "apify/facebook-pages-scraper",
+        "actor": "native",  # Playwright через российский прокси
         "field": "followersCount",
     },
     "ok.ru": {

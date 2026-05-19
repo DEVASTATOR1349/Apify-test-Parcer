@@ -24,6 +24,7 @@ from native import (
     dzen_subscribers,
     ok_subscribers,
     pinterest_followers,
+    facebook_followers,
 )
 
 
@@ -99,6 +100,7 @@ _NATIVE_HANDLERS = {
     "ok.ru": ok_subscribers,
     "pinterest.com": pinterest_followers,
     "dzen.ru": dzen_subscribers,
+    "facebook.com": facebook_followers,
 }
 
 

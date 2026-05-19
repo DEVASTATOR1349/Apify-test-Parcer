@@ -9,6 +9,7 @@ from loguru import logger
 from config import (
     VK_API_KEY,
     YOUTUBE_API_KEY,
+    FB_PROXY,
 )
 
 
@@ -259,6 +260,97 @@ def ok_subscribers(url: str, client_name: str) -> int | None:
         logger.warning(f"[{client_name}] OK error: {e}")
 
     return None
+
+
+# ──────────────────────────────────────────────────
+# Facebook (Playwright через российский прокси)
+# ──────────────────────────────────────────────────
+FB_CACHE: dict[str, int | None] = {}
+
+
+def _fb_playwright():
+    """Ленивый импорт Playwright (тяжёлый, только когда нужен)."""
+    from playwright.sync_api import sync_playwright
+    return sync_playwright
+
+
+def _fb_parse_count(raw: str) -> int:
+    """Парсит '1,3 тыс.' → 1300, '62 тыс.' → 62000, '3' → 3."""
+    s = raw.replace('\u00a0', ' ').strip().rstrip('.')
+    if 'тыс' in s or 'k' in s.lower():
+        s = s.replace('тыс.', '').replace('тыс', '').replace('k', '').replace('K', '').strip()
+        return int(float(s.replace(',', '.')) * 1000)
+    if 'млн' in s or 'm' in s.lower():
+        s = s.replace('млн', '').replace('m', '').replace('M', '').strip()
+        return int(float(s.replace(',', '.')) * 1000000)
+    return int(float(s.replace(',', '.')))
+
+
+def facebook_followers(url: str, client_name: str) -> int | None:
+    """Facebook: Playwright через российский прокси → парсинг HTML."""
+    if url in FB_CACHE:
+        return FB_CACHE[url]
+
+    if not FB_PROXY:
+        logger.warning(f"[{client_name}] FB_PROXY не задан, пропускаю Facebook")
+        return None
+
+    # Чистим URL от мусора
+    clean_url = url.split('&mibextid')[0].split('?mibextid')[0].split('&sk=')[0]
+    clean_url = clean_url.split('&rdid=')[0].split('&share_url=')[0].rstrip('?')
+
+    # Парсим прокси-строку
+    # Формат: http://user:pass@host:port
+    proxy_match = re.match(r'https?://([^:]+):([^@]+)@([^:]+):(\d+)', FB_PROXY)
+    if not proxy_match:
+        logger.error(f"[{client_name}] FB_PROXY в неверном формате: нужен http://user:pass@host:port")
+        return None
+    proxy_user, proxy_pass, proxy_host, proxy_port = proxy_match.groups()
+
+    SyncPlaywright = _fb_playwright()
+
+    try:
+        with SyncPlaywright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                proxy={
+                    'server': f'http://{proxy_host}:{proxy_port}',
+                    'username': proxy_user,
+                    'password': proxy_pass,
+                },
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            ctx = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+            )
+            page = ctx.new_page()
+            page.goto(clean_url, timeout=20000, wait_until='domcontentloaded')
+            page.wait_for_timeout(4000)
+            text = page.inner_text('body')
+            browser.close()
+
+            # Логин-волл
+            if 'Этот контент сейчас недоступен' in text or 'Выполните вход' in text:
+                logger.info(f"[{client_name}] Facebook: приватный профиль")
+                FB_CACHE[url] = None
+                return None
+
+            # Парсим: «число( тыс.)? [—–-] подписчик»
+            text_clean = text.replace('\u00a0', ' ')
+            m = re.search(r'([\d ,]+(?:\s*тыс\.?)?)\s*(?:[—–-]\s*)?подписчик', text_clean, re.I)
+            if m:
+                count = _fb_parse_count(m.group(1))
+                FB_CACHE[url] = count
+                return count
+
+            logger.debug(f"[{client_name}] Facebook: нет подписчиков в тексте (title={page})")
+            FB_CACHE[url] = None
+            return None
+
+    except Exception as e:
+        logger.warning(f"[{client_name}] Playwright error: {str(e)[:150]}")
+        FB_CACHE[url] = None
+        return None
 
 
 # ──────────────────────────────────────────────────
