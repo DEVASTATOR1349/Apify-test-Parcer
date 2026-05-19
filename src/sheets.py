@@ -11,6 +11,8 @@ from typing import Any
 import requests
 from loguru import logger
 
+from urllib.parse import urlparse, urlunparse
+
 from config import APPS_SCRIPT_URL, GOOGLE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
 
 
@@ -124,8 +126,68 @@ def read_links_sheet() -> list[dict[str, Any]]:
 # Батч-запись (один POST на всё)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# URL-нормализация и маппинг колонок «Статистики»
+# ---------------------------------------------------------------------------
+
+def normalize_url(url: str) -> str:
+    """
+    Нормализует URL для сопоставления.
+    - нижний регистр
+    - http → https
+    - убирает www.
+    - убирает query-параметры и fragment
+    - убирает trailing slash
+    """
+    parsed = urlparse(url.lower())
+    netloc = parsed.netloc.replace("www.", "")
+    path = parsed.path.rstrip("/")
+    # Всегда https для единообразия (на http редиректит)
+    return urlunparse(("https", netloc, path, "", "", ""))
+
+
+def build_stats_columns() -> dict[str, int]:
+    """
+    Читает заголовки листа «Статистика» (gid=0) и строит карту
+    {нормализованный_URL → индекс_колонки (0-based, как в Google Sheets)}.
+    """
+    import json
+
+    raw = _fetch_viz_data(gid=0)
+    if not raw:
+        logger.error("Не удалось прочитать Статистику")
+        return {}
+
+    data = json.loads(raw)
+    cols = data.get("table", {}).get("cols", [])
+
+    col_map: dict[str, int] = {}
+    skipped = 0
+    for i, col in enumerate(cols):
+        label = col.get("label", "")
+        if not label:
+            skipped += 1
+            continue
+        # Первый токен — URL
+        parts = label.split(" ")
+        url = parts[0]
+        if not url.startswith(("http://", "https://")):
+            skipped += 1
+            continue
+        key = normalize_url(url)
+        if key:
+            col_map[key] = i
+
+    logger.info(f"Колонок Статистики: {len(cols)}, сопоставлено URL: {len(col_map)}, пропущено: {skipped}")
+    return col_map
+
+
+# ---------------------------------------------------------------------------
+# Батч-запись (один POST на всё)
+# ---------------------------------------------------------------------------
+
 def write_results(results: list[dict[str, Any]]):
-    """Пишет результаты в листы 'Статистика (raw)' + 'Статистика' одним POST."""
+    """Пишет результаты в лист «Статистика (raw)» плоскими строками."""
     if not results:
         logger.info("Нет данных для записи")
         return
@@ -141,13 +203,33 @@ def write_results(results: list[dict[str, Any]]):
     ]
     ok = _post({
         "type": "batch_write",
-        "tabs": ["Статистика (raw)", "Статистика"],
+        "tabs": ["Статистика (raw)"],
         "rows": rows,
     })
     if ok:
-        logger.info(f"Батч записан: {len(rows)} строк в 2 листа")
+        logger.info(f"Батч записан: {len(rows)} строк в «Статистика (raw)»")
     else:
         logger.error(f"Не удалось записать батч из {len(rows)} строк")
+
+
+def write_stats_matrix(date: str, column_fills: list[tuple[int, int]]):
+    """
+    Пишет значения в лист «Статистика» (матрица: колонка = площадка, строка = дата).
+    column_fills: [(col_index, followers_value), ...]
+    """
+    if not column_fills:
+        return
+
+    ok = _post({
+        "type": "matrix_write",
+        "tab": "Статистика",
+        "date": date,
+        "cells": [[ci, fv] for ci, fv in column_fills],
+    })
+    if ok:
+        logger.info(f"Матрица записана: {len(column_fills)} ячеек в «Статистику»")
+    else:
+        logger.error(f"Не удалось записать матрицу ({len(column_fills)} ячеек)")
 
 
 def log_errors_batch(errors: list[dict[str, str]]):

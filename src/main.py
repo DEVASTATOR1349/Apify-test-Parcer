@@ -24,7 +24,7 @@ logger.add(
 )
 
 from config import TEST_MODE
-from sheets import read_links_sheet, write_results, log_errors_batch
+from sheets import read_links_sheet, write_results, write_stats_matrix, log_errors_batch, normalize_url, build_stats_columns
 from parser import fetch_followers, get_platform_name, _detect_platform
 
 
@@ -94,6 +94,16 @@ def _run_full(projects, today):
     total_links = sum(len(p["links"]) for p in projects)
     logger.info(f"Проектов: {len(projects)}, ссылок: {total_links}")
 
+    # Строим карту URL → колонка в Статистике
+    col_map = build_stats_columns()
+    if not col_map:
+        logger.warning("Не удалось прочитать колонки Статистики, пишу только в (raw)")
+    else:
+        logger.info(f"Карта колонок: {len(col_map)} URL")
+
+    stats_fills: list[tuple[int, int]] = []  # (col_index, followers)
+    not_matched_urls: set[str] = set()
+
     processed = 0
     for project in projects:
         name = project["name"]
@@ -111,6 +121,16 @@ def _run_full(projects, today):
                     "date": today, "client": name,
                     "platform": platform_name, "followers": str(followers),
                 })
+
+                # Сопоставляем URL → колонка Статистики
+                norm = normalize_url(link)
+                if norm in col_map:
+                    stats_fills.append((col_map[norm], followers))
+                    logger.debug(f"  → колонка {col_map[norm]}")
+                else:
+                    not_matched_urls.add(norm)
+                    logger.debug(f"  ⚠ URL не найден в Статистике: {norm}")
+
                 logger.success(f"  ✅ {platform_name}: {followers} подписчиков")
             else:
                 all_errors.append({
@@ -118,16 +138,25 @@ def _run_full(projects, today):
                     "link": link, "error": "Не удалось получить подписчиков",
                 })
 
+    if not_matched_urls:
+        logger.warning(
+            f"{len(not_matched_urls)} URL не сопоставлены с колонками Статистики: "
+            f"{', '.join(sorted(not_matched_urls)[:10])}"
+        )
+
+    # Пишем
     if all_errors:
-        logger.info(f"Запись {len(all_errors)} ошибок...")
         log_errors_batch(all_errors)
     if all_results:
-        logger.info(f"\nЗапись {len(all_results)} результатов...")
         write_results(all_results)
+    if stats_fills:
+        write_stats_matrix(today, stats_fills)
+    elif col_map:
+        logger.warning("Нет данных для матрицы Статистики")
 
     success = len(all_results)
     logger.info(f"\n{'=' * 50}")
-    logger.info(f"Готово! Успешно: {success}, Ошибок: {total_links - success}")
+    logger.info(f"Готово! Успешно: {success}, матрица: {len(stats_fills)} ячеек, Ошибок: {total_links - success}")
 
 
 if __name__ == "__main__":
