@@ -155,6 +155,10 @@ def fetch_followers(url: str, client_name: str) -> int | None:
                 logger.info(f"[{client_name}] {platform_key}: {result:,} подписчиков")
                 return result
 
+            # Отладка: покажем ключи ответа
+            logger.debug(
+                f"[{client_name}] {actor_name} ответ: keys={list(items[0].keys())[:20]}"
+            )
             logger.warning(
                 f"[{client_name}] В ответе {actor_name} нет поля с подписчиками"
             )
@@ -187,8 +191,8 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
     if actor_name == "streamers/youtube-scraper":
         return {
             "startUrls": [{"url": url}],
-            "maxResults": 1,
-            "maxVideos": 1,
+            "maxResults": 10,
+            "maxVideos": 10,
             "maxShorts": 0,
             "maxLiveStreams": 0,
         }
@@ -201,6 +205,10 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
         return {"profiles": [username]}
 
     if actor_name == "apify/facebook-pages-scraper":
+        # profile.php — это личные профили, не страницы. Пропускаем.
+        if "profile.php" in url:
+            logger.info(f"[{client_name}] Пропуск Facebook-профиля (не страница): {url[:60]}...")
+            return None
         return {"pageUrls": [url]}
 
     if actor_name == "easyapi/pinterest-profile-scraper":
