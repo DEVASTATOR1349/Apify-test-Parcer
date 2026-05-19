@@ -8,6 +8,7 @@ load_dotenv()
 
 # === Apify ===
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+APIFY_API_TOKEN_BACKUP = os.getenv("APIFY_API_TOKEN_BACKUP")
 
 # === Apps Script (Google Sheets bridge) ===
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")

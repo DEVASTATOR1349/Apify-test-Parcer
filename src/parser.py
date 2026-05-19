@@ -10,6 +10,7 @@ from loguru import logger
 
 from config import (
     APIFY_API_TOKEN,
+    APIFY_API_TOKEN_BACKUP,
     MAX_RETRIES,
     PLATFORM_ACTORS,
     PLATFORM_NAMES,
@@ -128,49 +129,61 @@ def fetch_followers(url: str, client_name: str) -> int | None:
         return None
 
     # Запускаем актор с ретраями
-    client = ApifyClient(token=APIFY_API_TOKEN)
+    # Сначала пробуем основной токен, при превышении лимита — резервный
+    tokens_to_try = [APIFY_API_TOKEN]
+    if APIFY_API_TOKEN_BACKUP:
+        tokens_to_try.append(APIFY_API_TOKEN_BACKUP)
+
     last_error = None
+    for token_index, token in enumerate(tokens_to_try):
+        if token_index > 0:
+            logger.info(f"[{client_name}] Переключаюсь на резервный Apify-токен...")
+        client = ApifyClient(token=token)
 
-    for attempt in range(1, MAX_RETRIES + 2):
-        try:
-            if attempt > 1:
-                logger.info(
-                    f"[{client_name}] Попытка #{attempt} для {platform_key}: {url[:60]}..."
+        for attempt in range(1, MAX_RETRIES + 2):
+            try:
+                if attempt > 1:
+                    logger.info(
+                        f"[{client_name}] Попытка #{attempt} для {platform_key}: {url[:60]}..."
+                    )
+                    time.sleep(REQUEST_DELAY * attempt)
+
+                run = client.actor(actor_name).call(run_input=run_input)
+                dataset = client.dataset(run["defaultDatasetId"])
+                items = dataset.list_items().items
+
+                if not items:
+                    logger.warning(
+                        f"[{client_name}] Актор {actor_name} не вернул данных для {url}"
+                    )
+                    break
+
+                # Ищем количество подписчиков в первом результате
+                result = _find_followers_in_item(items[0], field_name)
+                if result is not None:
+                    logger.info(f"[{client_name}] {platform_key}: {result:,} подписчиков")
+                    return result
+
+                # Отладка: покажем ключи ответа
+                logger.debug(
+                    f"[{client_name}] {actor_name} ответ: keys={list(items[0].keys())[:20]}"
                 )
-                time.sleep(REQUEST_DELAY * attempt)
-
-            run = client.actor(actor_name).call(run_input=run_input)
-            dataset = client.dataset(run["defaultDatasetId"])
-            items = dataset.list_items().items
-
-            if not items:
                 logger.warning(
-                    f"[{client_name}] Актор {actor_name} не вернул данных для {url}"
+                    f"[{client_name}] В ответе {actor_name} нет поля с подписчиками"
                 )
-                return None
+                break
 
-            # Ищем количество подписчиков в первом результате
-            result = _find_followers_in_item(items[0], field_name)
-            if result is not None:
-                logger.info(f"[{client_name}] {platform_key}: {result:,} подписчиков")
-                return result
-
-            # Отладка: покажем ключи ответа
-            logger.debug(
-                f"[{client_name}] {actor_name} ответ: keys={list(items[0].keys())[:20]}"
-            )
-            logger.warning(
-                f"[{client_name}] В ответе {actor_name} нет поля с подписчиками"
-            )
-            return None
-
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                f"[{client_name}] Ошибка попытки #{attempt} для {url}: {e}"
-            )
-            if attempt <= MAX_RETRIES + 1:
-                continue
+            except Exception as e:
+                last_error = e
+                err_msg = str(e)
+                logger.warning(
+                    f"[{client_name}] Ошибка попытки #{attempt} для {url}: {err_msg[:120]}"
+                )
+                # Если лимит исчерпан — не ретраить, сразу fallback
+                if "limit exceeded" in err_msg.lower():
+                    break
+                if attempt <= MAX_RETRIES:
+                    continue
 
     logger.error(
         f"[{client_name}] Все попытки исчерпаны для {url}: {last_error}"
