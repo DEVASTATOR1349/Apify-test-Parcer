@@ -58,8 +58,8 @@ PLATFORM_ACTORS = {
         "field": "members_count",
     },
     "facebook.com": {
-        "actor": "native",  # Playwright через российский прокси
-        "field": "followersCount",
+        "actor": "apify/facebook-pages-scraper",  # 1 запрос, без логина для публичных страниц
+        "field": "followers",
     },
     "ok.ru": {
         "actor": "native",  # парсинг HTML

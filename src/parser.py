@@ -221,7 +221,7 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
         if "profile.php" in url:
             logger.info(f"[{client_name}] Пропуск Facebook-профиля: {url[:60]}...")
             return None
-        return {"pageUrls": [url]}
+        return {"startUrls": [{"url": url}], "resultsLimit": 1}
 
     if actor_name == "apify/puppeteer-scraper":
         return {
