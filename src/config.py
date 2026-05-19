@@ -33,8 +33,8 @@ PLATFORM_ACTORS = {
         "field": "followersCount",
     },
     "youtube.com": {
-        "actor": "streamers/youtube-scraper",
-        "field": "numberOfSubscribers",  # поле на видео (subscriberCount отсутствует)
+        "actor": "apify/web-scraper",  # бесплатный, парсим /about через pageFunction
+        "field": "subscriberCount",
     },
     "tiktok.com": {
         "actor": "clockworks/tiktok-profile-scraper",

@@ -255,6 +255,47 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
             "proxyConfiguration": {"useApifyProxy": True},
         }
 
+    if actor_name == "apify/web-scraper":
+        # YouTube — идём на /about и парсим подписчиков
+        if "youtube.com" in url or "youtu.be" in url:
+            channel_url = url.rstrip("/")
+            if "/about" not in channel_url:
+                channel_url = channel_url.split("?")[0] + "/about"
+            return {
+                "startUrls": [{"url": channel_url}],
+                "pageFunction": (
+                    "async function pageFunction(context) {"
+                    "  const $ = context.jQuery;"
+                    "  const text = $('body').text();"
+                    "  const m = text.match(/(\\d[\\d.,]*[KMB]?)\\s*subscriber/i);"
+                    "  if (m) {"
+                    "    let n = m[1].replace(/,/g, '');"
+                    "    if (n.endsWith('K')) n = parseFloat(n) * 1000;"
+                    "    else if (n.endsWith('M')) n = parseFloat(n) * 1000000;"
+                    "    else if (n.endsWith('B')) n = parseFloat(n) * 1000000000;"
+                    "    return { subscriberCount: parseInt(n) };"
+                    "  }"
+                    "  const el = $('[class*=\"subscriber\"], [id*=\"subscriber\"], #subscriber-count, #subscriber-count-text');"
+                    "  if (el.length) return { subscriberCount: parseInt(el.first().text().replace(/[^0-9]/g, '')) };"
+                    "  return { subscriberCount: 0, raw: text.slice(0, 300) };"
+                    "}"
+                ),
+                "maxPagesPerCrawl": 1,
+                "maxResultsPerCrawl": 1,
+            }
+        # Pinterest / другие — фолбэк
+        return {
+            "startUrls": [{"url": url}],
+            "pageFunction": (
+                "async function pageFunction(context) {"
+                "  const $ = context.jQuery;"
+                "  return { url: context.request.url, title: $('title').text() };"
+                "}"
+            ),
+            "maxPagesPerCrawl": 1,
+            "maxResultsPerCrawl": 1,
+        }
+
     if "apify/web-scraper" in actor_name:
         return {
             "pageFunction": (
