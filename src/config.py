@@ -29,9 +29,9 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
 
 # === Листы в Google Sheets ===
-# Лист со списком клиентов и ссылок (Лист1 / первый лист)
-SHEET_LINKS_TAB = "Лист1"
-# Лист куда пишем строчные данные (создадим если нет)
+# Лист «БазаКлиентов»: 3 колонки (Клиент, Источник, ссылка)
+SHEET_LINKS_GID = 21085774
+# Лист куда пишем строчные данные
 SHEET_RESULTS_TAB = "Статистика (raw)"
 # Лист для лога ошибок
 SHEET_ERRORS_TAB = "Ошибки"
@@ -95,6 +95,32 @@ PLATFORM_ACTORS = {
         "actor": None,  # нет работающего Apify актора
         "field": None,
     },
+}
+
+# Маппинг названий из «БазаКлиентов» → ключ платформы
+SOURCE_NAME_MAP = {
+    "Instagram": "instagram.com",
+    "Instagram1": "instagram.com",
+    "Instagram2": "instagram.com",
+    "Youtube": "youtube.com",
+    "YouTube": "youtube.com",
+    "Facebook": "facebook.com",
+    "Tiktok": "tiktok.com",
+    "TikTok": "tiktok.com",
+    "VK": "vk.com",
+    "Telegram": "t.me",
+    "Rutube": "rutube.ru",
+    "Odnoklassniki": "ok.ru",
+    "OK": "ok.ru",
+    "Dzen": "dzen.ru",
+    "Дзен": "dzen.ru",
+    "Likee": "likee.video",
+    "Pinterest": "pinterest.com",
+    "SnapChat": "snapchat.com",
+    "Snapchat": "snapchat.com",
+    "Twiiter": "twitter.com",  # опечатка в источнике
+    "Twitter": "twitter.com",
+    "X": "x.com",
 }
 
 # Названия площадок для человекочитаемого вывода

@@ -11,7 +11,7 @@ from typing import Any
 import requests
 from loguru import logger
 
-from config import APPS_SCRIPT_URL, GOOGLE_SHEET_ID
+from config import APPS_SCRIPT_URL, GOOGLE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
 
 
 def _post(data: dict) -> bool:
@@ -59,14 +59,15 @@ def _fetch_viz_data(gid: int = 0) -> dict | None:
 
 def read_links_sheet() -> list[dict[str, Any]]:
     """
-    Читает список проектов и ссылок через Google Visualization API.
-    Возвращает [{"name": "Номос", "links": ["https://..."...]}, ...]
+    Читает «БазуКлиентов» (gid=21085774) через Google Visualization API.
+    Формат: 3 колонки — Клиент, Источник, ссылка.
+    Возвращает [{"name": "ВсеСвои", "links": ["https://...", ...]}, ...]
     """
     import json
 
-    raw = _fetch_viz_data(gid=0)
+    raw = _fetch_viz_data(gid=SHEET_LINKS_GID)
     if not raw:
-        logger.error("Не удалось получить данные из таблицы")
+        logger.error("Не удалось получить данные из таблицы (БазаКлиентов)")
         return []
 
     try:
@@ -75,82 +76,48 @@ def read_links_sheet() -> list[dict[str, Any]]:
         logger.error(f"Ошибка парсинга JSON: {e}")
         return []
 
-    cols = data.get("table", {}).get("cols", [])
-    if not cols:
-        logger.warning("Нет колонок в таблице")
+    rows = data.get("table", {}).get("rows", [])
+    if not rows:
+        logger.warning("Нет данных в «БазеКлиентов»")
         return []
 
-    # Парсим заголовки колонок (начиная с 1, т.к. 0 — это дата)
-    # Формат: "URL НазваниеПроекта НазваниеПлощадки"
-    entries: list[tuple[str, str]] = []
-    for i, col in enumerate(cols):
-        if i == 0:
+    # Группируем: Клиент → [ссылки]
+    projects: dict[str, list[str]] = {}
+    skipped_sources: set[str] = set()
+
+    for row in rows[1:]:  # пропускаем заголовок
+        vals = [c.get("v") if c else None for c in row["c"]]
+        client = (vals[0] or "").strip()
+        source = (vals[1] or "").strip()
+        url = (vals[2] or "").strip()
+
+        if not client or not url:
             continue
-        label = col.get("label", "")
-        if not label:
-            continue
-        parts = label.split(" ")
-        url = parts[0]
         if not url.startswith(("http://", "https://")):
             continue
-        entries.append((url, " ".join(parts[1:]).strip()))
 
-    # Группируем по проектам
-    PLATFORM_NAMES = {
-        "Instagram", "Ютуб", "YouTube", "Фейсбук", "Facebook",
-        "ТикТок", "TikTok", "ВК", "VK", "Телеграм", "Telegram",
-        "Рутьюб", "Rutube", "ОК", "OK",
-        "Дзен", "Дзен(Y)", "Пинтерест", "Pinterest", "Лайки",
-        "Likee", "Твиттер", "Twitter", "Snapchat",
-        "Инст.", "Инст. Самара", "Инстаграм2", "Инстаграм",
-        "Лайки(Y)", "Лайки(блок)", "Пинтерст", "Одноклассники",
-        "Рутуб", "Рутьюб", "Fb", "IG", "YT", "TT", "tg",
-    }
-
-    projects: list[dict[str, Any]] = []
-    current_project: str | None = None
-
-    for url, label in entries:
-        parts = [p for p in label.split(" ") if p and p != "нету"]
-        if not parts:
+        # Проверяем что источник — известная платформа
+        platform_key = SOURCE_NAME_MAP.get(source)
+        if not platform_key:
+            skipped_sources.add(source)
             continue
 
-        is_new_project = False
-        project_name: str | None = None
+        if client not in projects:
+            projects[client] = []
+        projects[client].append(url)
 
-        if len(parts) >= 2:
-            candidate = parts[0]
-            if candidate not in PLATFORM_NAMES:
-                project_name = candidate
-                is_new_project = True
-            elif current_project is None:
-                project_name = candidate
-                is_new_project = True
-            else:
-                project_name = current_project
-        else:
-            if current_project:
-                project_name = current_project
-            else:
-                continue
+    if skipped_sources:
+        logger.debug(f"Пропущенные источники: {', '.join(sorted(skipped_sources))}")
 
-        if is_new_project:
-            projects.append({"name": project_name, "links": []})
-            current_project = project_name
-
-        if projects:
-            projects[-1]["links"].append(url)
-
-    projects = [p for p in projects if p.get("links")]
-
+    result = [{"name": k, "links": v} for k, v in projects.items()]
     logger.info(
-        f"Прочитано {len(projects)} проектов, "
-        f"всего {sum(len(p['links']) for p in projects)} ссылок"
+        f"«БазаКлиентов»: {len(result)} проектов, "
+        f"всего {sum(len(p['links']) for p in result)} ссылок"
     )
-    for p in projects:
+    for p in result:
         logger.debug(f"  {p['name']}: {len(p['links'])} ссылок")
 
-    return projects
+    return result
 
 
 # ---------------------------------------------------------------------------
