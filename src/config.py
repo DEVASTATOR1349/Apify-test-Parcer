@@ -10,6 +10,13 @@ load_dotenv()
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 APIFY_API_TOKEN_BACKUP = os.getenv("APIFY_API_TOKEN_BACKUP")
 
+# === Прямые API ===
+VK_API_KEY = os.getenv("VK_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+
+# === Режим ===
+TEST_MODE = os.getenv("TEST_MODE", "").lower() in ("1", "true", "yes")
+
 # === Apps Script (Google Sheets bridge) ===
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
@@ -33,40 +40,40 @@ PLATFORM_ACTORS = {
         "field": "followersCount",
     },
     "youtube.com": {
-        "actor": "apify/web-scraper",  # бесплатный, парсим /about через pageFunction
-        "field": "subscriberCount",
+        "actor": "native",  # YouTube Data API v3
+        "field": "statistics.subscriberCount",
     },
     "tiktok.com": {
         "actor": "clockworks/tiktok-profile-scraper",
-        "field": "authorMeta.fans",  # authorMeta: {fans, following, heart, video}
+        "field": "authorMeta.fans",  # Apify
     },
     "vk.com": {
-        "actor": None,  # нет работающего Apify актора (все 404)
-        "field": None,
+        "actor": "native",  # VK API
+        "field": "members_count",
     },
     "facebook.com": {
         "actor": "apify/facebook-pages-scraper",
         "field": "followersCount",
     },
     "ok.ru": {
-        "actor": None,  # нет работающего Apify актора
-        "field": None,
+        "actor": "native",  # парсинг HTML
+        "field": "membersCount",
     },
     "dzen.ru": {
         "actor": "apify/puppeteer-scraper",  # будет заменён на свой актор
         "field": "subscribers",
     },
     "rutube.ru": {
-        "actor": None,  # нет работающего Apify актора
-        "field": None,
+        "actor": "native",  # /api/video/person/
+        "field": "subscribers_count",
     },
     "t.me": {
         "actor": None,  # нет работающего Apify актора (все 404)
         "field": None,
     },
     "pinterest.com": {
-        "actor": "easyapi/pinterest-profile-scraper",
-        "field": "followersCount",
+        "actor": "native",  # JSON-LD парсинг
+        "field": "followerCount",
     },
     "x.com":
     {
