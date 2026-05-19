@@ -30,6 +30,7 @@ function doPost(e) {
 //  Батч-запись в лист «Статистика SQL»
 // ──────────────────────────────────────────────────
 function handleBatchWrite(data) {
+  // data.tab = "Статистика новая" (опционально)
   // data.rows = [[date, client, platform, followers], ...]
   const rows = data.rows;
 
@@ -38,7 +39,7 @@ function handleBatchWrite(data) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const tabName = "Статистика SQL";
+  const tabName = data.tab || "Статистика новая";
 
   let sheet = ss.getSheetByName(tabName);
   if (!sheet) {

@@ -141,9 +141,9 @@ def write_results(results: list[dict[str, Any]]):
         ]
         for r in results
     ]
-    ok = _post({"type": "batch_write", "rows": rows})
+    ok = _post({"type": "batch_write", "rows": rows, "tab": "Статистика новая"})
     if ok:
-        logger.info(f"Записано: {len(rows)} строк в «Статистика SQL»")
+        logger.info(f"Записано: {len(rows)} строк в «Статистика новая»")
     else:
         logger.error(f"Не удалось записать {len(rows)} строк")
 
