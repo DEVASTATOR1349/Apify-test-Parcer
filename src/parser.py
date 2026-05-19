@@ -30,6 +30,10 @@ def _detect_platform(url: str) -> str | None:
     if domain in PLATFORM_ACTORS:
         return domain
 
+    # pin.it → Pinterest
+    if domain == "pin.it":
+        return "pinterest.com"
+
     for key in PLATFORM_ACTORS:
         if key in domain:
             return key
