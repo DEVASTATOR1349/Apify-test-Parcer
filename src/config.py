@@ -52,8 +52,8 @@ PLATFORM_ACTORS = {
         "field": None,
     },
     "dzen.ru": {
-        "actor": None,  # нет работающего Apify актора
-        "field": None,
+        "actor": "apify/puppeteer-scraper",  # будет заменён на свой актор
+        "field": "subscribers",
     },
     "rutube.ru": {
         "actor": None,  # нет работающего Apify актора
@@ -64,8 +64,8 @@ PLATFORM_ACTORS = {
         "field": None,
     },
     "pinterest.com": {
-        "actor": None,  # нет работающего Apify актора
-        "field": None,
+        "actor": "easyapi/pinterest-profile-scraper",
+        "field": "followersCount",
     },
     "x.com":
     {

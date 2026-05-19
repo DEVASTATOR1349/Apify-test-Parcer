@@ -26,7 +26,7 @@ logger.add(
 )
 
 from config import APIFY_API_TOKEN, MAX_RETRIES, REQUEST_DELAY
-from sheets import read_links_sheet, write_results, log_error
+from sheets import read_links_sheet, write_results, log_errors_batch
 from parser import fetch_followers, get_platform_name
 
 
@@ -50,6 +50,7 @@ def run():
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     all_results = []
+    all_errors = []
     total_links = sum(len(p["links"]) for p in projects)
 
     logger.info(
@@ -84,16 +85,26 @@ def run():
                     f"  ✅ {platform_name}: {followers} подписчиков"
                 )
             else:
-                log_error(name, link, "Не удалось получить подписчиков")
+                all_errors.append({
+                    "date": today,
+                    "client": name,
+                    "link": link,
+                    "error": "Не удалось получить подписчиков",
+                })
 
-    # 3. Записываем в Google Sheets
+    # 3. Записываем ошибки (батч — один POST)
+    if all_errors:
+        logger.info(f"Запись {len(all_errors)} ошибок...")
+        log_errors_batch(all_errors)
+
+    # 4. Записываем результаты в Google Sheets (батч — один POST в 2 листа)
     if all_results:
         logger.info(f"\nЗапись {len(all_results)} результатов в Google Sheets...")
         write_results(all_results)
     else:
         logger.warning("Нет результатов для записи")
 
-    # 4. Итог
+    # 5. Итог
     success = len(all_results)
     failed = total_links - success
     logger.info(f"\n{'=' * 50}")

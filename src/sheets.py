@@ -1,4 +1,7 @@
-"""Работа с Google Sheets: чтение через Visualization API, запись через Apps Script."""
+"""Работа с Google Sheets: чтение через Visualization API, запись через Apps Script.
+
+Все записи идут одним POST-запросом (батч), чтобы не упираться в лимиты Google.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +21,16 @@ def _post(data: dict) -> bool:
         return False
 
     try:
-        resp = requests.post(APPS_SCRIPT_URL, json=data, timeout=30)
+        resp = requests.post(
+            APPS_SCRIPT_URL, json=data, timeout=60
+        )
         text = resp.text.strip()
         if resp.status_code == 200 and text == "OK":
             return True
         else:
-            logger.warning(f"Apps Script ответил: {resp.status_code} {text[:200]}")
+            logger.warning(
+                f"Apps Script ответил: {resp.status_code} {text[:200]}"
+            )
             return False
     except requests.RequestException as e:
         logger.error(f"Ошибка отправки в Apps Script: {e}")
@@ -75,7 +82,7 @@ def read_links_sheet() -> list[dict[str, Any]]:
 
     # Парсим заголовки колонок (начиная с 1, т.к. 0 — это дата)
     # Формат: "URL НазваниеПроекта НазваниеПлощадки"
-    entries = []  # [(url, label)]
+    entries: list[tuple[str, str]] = []
     for i, col in enumerate(cols):
         if i == 0:
             continue
@@ -88,13 +95,11 @@ def read_links_sheet() -> list[dict[str, Any]]:
             continue
         entries.append((url, " ".join(parts[1:]).strip()))
 
-    # Группируем по проектам.
-    # Проект меняется когда после URL идёт >=2 слов и второе слово — это не платформа
-    # Эвристика: если в заголовке >=2 частей после URL — это новый проект
+    # Группируем по проектам
     PLATFORM_NAMES = {
         "Instagram", "Ютуб", "YouTube", "Фейсбук", "Facebook",
         "ТикТок", "TikTok", "ВК", "VK", "Телеграм", "Telegram",
-        "Рутьюб", "Rutube", "Rutube", "ОК", "OK",
+        "Рутьюб", "Rutube", "ОК", "OK",
         "Дзен", "Дзен(Y)", "Пинтерест", "Pinterest", "Лайки",
         "Likee", "Твиттер", "Twitter", "Snapchat",
         "Инст.", "Инст. Самара", "Инстаграм2", "Инстаграм",
@@ -102,35 +107,28 @@ def read_links_sheet() -> list[dict[str, Any]]:
         "Рутуб", "Рутьюб", "Fb", "IG", "YT", "TT", "tg",
     }
 
-    projects = []
-    current_project = None
+    projects: list[dict[str, Any]] = []
+    current_project: str | None = None
 
     for url, label in entries:
         parts = [p for p in label.split(" ") if p and p != "нету"]
         if not parts:
             continue
 
-        # Определяем: это новый проект или продолжение?
         is_new_project = False
-        project_name = None
+        project_name: str | None = None
 
         if len(parts) >= 2:
-            # Второе слово — потенциальное имя платформы
-            # Если это не платформа — значит перед нами многословный проект
             candidate = parts[0]
-            second = parts[1]
             if candidate not in PLATFORM_NAMES:
                 project_name = candidate
                 is_new_project = True
             elif current_project is None:
-                # Первая запись — берём как проект
                 project_name = candidate
                 is_new_project = True
             else:
-                # Продолжаем текущий проект
                 project_name = current_project
         else:
-            # Одно слово после URL — это название площадки (без проекта)
             if current_project:
                 project_name = current_project
             else:
@@ -140,11 +138,9 @@ def read_links_sheet() -> list[dict[str, Any]]:
             projects.append({"name": project_name, "links": []})
             current_project = project_name
 
-        # Добавляем ссылку в текущий (последний) проект
         if projects:
             projects[-1]["links"].append(url)
 
-    # Чистка: убираем проекты без ссылок
     projects = [p for p in projects if p.get("links")]
 
     logger.info(
@@ -157,30 +153,60 @@ def read_links_sheet() -> list[dict[str, Any]]:
     return projects
 
 
+# ---------------------------------------------------------------------------
+# Батч-запись (один POST на всё)
+# ---------------------------------------------------------------------------
+
 def write_results(results: list[dict[str, Any]]):
-    """Пишет результаты в лист Статистика (raw) через Apps Script POST."""
+    """Пишет результаты в листы 'Статистика (raw)' + 'Статистика' одним POST."""
     if not results:
         logger.info("Нет данных для записи")
         return
 
-    success = 0
-    for r in results:
-        ok = _post({
-            "type": "write",
-            "tab": "Статистика (raw)",
-            "date": r.get("date", ""),
-            "client": r.get("client", ""),
-            "platform": r.get("platform", ""),
-            "followers": str(r.get("followers", "")),
-        })
-        if ok:
-            success += 1
+    rows = [
+        [
+            r.get("date", ""),
+            r.get("client", ""),
+            r.get("platform", ""),
+            str(r.get("followers", "")),
+        ]
+        for r in results
+    ]
+    ok = _post({
+        "type": "batch_write",
+        "tabs": ["Статистика (raw)", "Статистика"],
+        "rows": rows,
+    })
+    if ok:
+        logger.info(f"Батч записан: {len(rows)} строк в 2 листа")
+    else:
+        logger.error(f"Не удалось записать батч из {len(rows)} строк")
 
-    logger.info(f"Записано строк: {success} из {len(results)}")
 
+def log_errors_batch(errors: list[dict[str, str]]):
+    """Пишет все ошибки одним POST в лист 'Ошибки'."""
+    if not errors:
+        return
+    ok = _post({
+        "type": "batch_errors",
+        "tab": "Ошибки",
+        "rows": [
+            [e["date"], e["client"], e["link"], e["error"]]
+            for e in errors
+        ],
+    })
+    if ok:
+        logger.info(f"Записано ошибок: {len(errors)}")
+    else:
+        logger.warning(f"Не удалось записать {len(errors)} ошибок")
+
+
+# ---------------------------------------------------------------------------
+# Старый интерфейс (оставлен для обратной совместимости)
+# ---------------------------------------------------------------------------
 
 def log_error(client: str, link: str, error: str):
-    """Пишет ошибку в лист Ошибки."""
+    """Однострочная запись ошибки (используй log_errors_batch для массовой)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _post({
         "type": "error",

@@ -199,6 +199,37 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
     if actor_name == "apify/facebook-pages-scraper":
         return {"pageUrls": [url]}
 
+    if actor_name == "easyapi/pinterest-profile-scraper":
+        username = _extract_pinterest_username(url)
+        if not username:
+            logger.warning(f"[{client_name}] Не удалось извлечь username из Pinterest: {url}")
+            return None
+        return {"usernames": [username]}
+
+    if actor_name == "apify/puppeteer-scraper":
+        # Дзен — кастомный pageFunction для Puppeteer
+        return {
+            "pageFunction": (
+                "async function pageFunction(context) {"
+                "  const { page, request, log } = context;"
+                "  await page.waitForTimeout(3000);"
+                "  const result = await page.evaluate(() => {"
+                "    const el = document.querySelector('[data-test-id=\"subscribers-count\"]');"
+                "    if (el) return { subscribers: parseInt(el.textContent.replace(/[^0-9]/g, '')) };"
+                "    const all = document.body.innerText;"
+                "    const m = all.match(/(\\d[\\d\\s]*)\\s*(?:подписчик|subscriber| follower)/i);"
+                "    if (m) return { subscribers: parseInt(m[1].replace(/\\s/g, '')) };"
+                "    return { subscribers: 0, raw: all.slice(0, 500) };"
+                "  });"
+                "  return result;"
+                "}"
+            ),
+            "startUrls": [{"url": url}],
+            "maxPagesPerCrawl": 1,
+            "maxResultsPerCrawl": 1,
+            "proxyConfiguration": {"useApifyProxy": True},
+        }
+
     if "apify/web-scraper" in actor_name:
         return {
             "pageFunction": (
@@ -235,4 +266,15 @@ def _extract_tiktok_username(url: str) -> str | None:
     for part in parts:
         if part.startswith("@"):
             return part[1:].split("?")[0]
+    return None
+
+
+def _extract_pinterest_username(url: str) -> str | None:
+    """Извлекает username из Pinterest URL."""
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    # Форматы: pinterest.com/username/ или pinterest.com/username/boards/
+    parts = path.split("/")
+    if parts and parts[0] and parts[0] not in ("pin", "search", "ideas", "business", "_"):
+        return parts[0].split("?")[0]
     return None

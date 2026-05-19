@@ -33,8 +33,26 @@ crontab crontab.example
 2. Для каждой ссылки определяет платформу
 3. Через Apify API запускает нужный актор
 4. Ждёт результат, извлекает количество подписчиков
-5. Пишет в лист "Статистика (raw)" в формате: Дата | Клиент | Площадка | Подписчиков
-6. Ошибки пишет в лист "Ошибки"
+5. **Одним POST-запросом** пишет в листы "Статистика (raw)" и "Статистика"
+6. Ошибки пишет в лист "Ошибки" (тоже одним батчем)
+
+## Поддерживаемые платформы
+
+| Платформа | Apify актор | Статус |
+|---|---|---|
+| Instagram | apify/instagram-profile-scraper | ✅ |
+| YouTube | streamers/youtube-scraper | ✅ |
+| TikTok | clockworks/tiktok-profile-scraper | ✅ |
+| Facebook | apify/facebook-pages-scraper | ✅ |
+| Pinterest | easyapi/pinterest-profile-scraper | ✅ |
+| Дзен | apify/puppeteer-scraper | 🧪 тестовый |
+| VK | — | ❌ |
+| Telegram | — | ❌ |
+| OK | — | ❌ |
+| Rutube | — | ❌ |
+| Twitter/X | — | ❌ |
+| Snapchat | — | ❌ |
+| Likee | — | ❌ |
 
 ## Лимиты
 
