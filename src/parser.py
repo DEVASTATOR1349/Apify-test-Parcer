@@ -22,23 +22,18 @@ def _detect_platform(url: str) -> str | None:
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
 
-    # Убираем www
     if domain.startswith("www."):
         domain = domain[4:]
-    # Убираем порт если есть
     if ":" in domain:
         domain = domain.split(":")[0]
 
-    # Проверяем точное совпадение
     if domain in PLATFORM_ACTORS:
         return domain
 
-    # Проверяем вхождение
     for key in PLATFORM_ACTORS:
         if key in domain:
             return key
 
-    # Telegram может быть t.me или web.telegram.org
     if "t.me" in domain or "telegram.org" in domain:
         return "t.me"
 
@@ -49,6 +44,57 @@ def get_platform_name(url: str) -> str:
     """Возвращает человекочитаемое имя платформы."""
     platform_key = _detect_platform(url)
     return PLATFORM_NAMES.get(platform_key, url)
+
+
+def _get_nested(obj: dict, path: str):
+    """Достаёт значение из вложенного словаря по точечной нотации.
+    Пример: authorMeta.followers → obj['authorMeta']['followers']"""
+    parts = path.split(".")
+    current = obj
+    for part in parts:
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _find_followers_in_item(item: dict, field_name: str) -> int | None:
+    """Ищет количество подписчиков в item разными способами."""
+
+    # 1. Прямое поле (в т.ч. точечная нотация)
+    val = _get_nested(item, field_name)
+    if val is not None:
+        return int(val)
+
+    # 2. Популярные варианты полей на верхнем уровне
+    for variant in [
+        "followersCount", "subscribersCount",
+        "subscriberCount", "followerCount",
+        "fansCount", "totalFollowers",
+        "membersCount", "totalMembers",
+        "numberOfSubscribers", "subscriber_count",
+    ]:
+        v = item.get(variant)
+        if v is not None:
+            return int(v)
+
+    # 3. Для TikTok — authorMeta
+    author = item.get("authorMeta", {})
+    if isinstance(author, dict):
+        for f in ("fans", "followers", "followerCount", "totalFollowers"):
+            v = author.get(f)
+            if v is not None:
+                return int(v)
+
+    # 4. channelStats (YouTube)
+    stats = item.get("channelStats", {})
+    if isinstance(stats, dict):
+        v = stats.get("subscriberCount") or stats.get("totalSubscribers")
+        if v is not None:
+            return int(v)
+
+    return None
 
 
 def fetch_followers(url: str, client_name: str) -> int | None:
@@ -66,69 +112,22 @@ def fetch_followers(url: str, client_name: str) -> int | None:
 
     platform_config = PLATFORM_ACTORS.get(platform_key)
     if platform_config is None or platform_config.get("actor") is None:
-        logger.info(f"[{client_name}] Платформа без парсера: {platform_key} ({url})")
+        logger.info(f"[{client_name}] Пропуск (нет парсера): {platform_key} ({url})")
         return None
 
     actor_name = platform_config["actor"]
     field_name = platform_config["field"]
 
     # Настраиваем input для конкретного актора
-    if actor_name == "apify/web-scraper":
-        # Универсальный веб-скрейпер — настраиваем под конкретный сайт
-        run_input = {
-            "pageFunction": (
-                "async function pageFunction(context) {"
-                "  const $ = context.jQuery;"
-                "  return {"
-                "    url: context.request.url,"
-                "    title: $('title').text()"
-                "  };"
-                "}"
-            ),
-            "startUrls": [{"url": url}],
-        }
-    elif actor_name == "apify/instagram-profile-scraper":
-        username = _extract_instagram_username(url)
-        if not username:
-            logger.warning(f"[{client_name}] Не удалось извлечь username из Instagram: {url}")
-            return None
-        run_input = {"usernames": [username]}
-    elif actor_name == "apify/youtube-scraper":
-        run_input = {"channelUrls": [url]}
-    elif actor_name in ("apify/twitter-scraper", "apify/twitter-profile-scraper"):
-        run_input = {"urls": [url]}
-    elif actor_name == "clockworks/tiktok-profile-scraper":
-        username = _extract_tiktok_username(url)
-        if not username:
-            logger.warning(f"[{client_name}] Не удалось извлечь username из TikTok: {url}")
-            return None
-        run_input = {"username": [username]}
-    elif actor_name == "apify/vk-community-stats":
-        screen_name = _extract_vk_screenname(url)
-        if not screen_name:
-            logger.warning(f"[{client_name}] Не удалось извлечь screen_name из VK: {url}")
-            return None
-        run_input = {"screenName": screen_name}
-    elif actor_name == "apify/facebook-pages-scraper":
-        run_input = {"pageUrls": [url]}
-    elif actor_name == "apify/telegram-channel-scraper":
-        username = _extract_telegram_username(url)
-        if not username:
-            logger.warning(f"[{client_name}] Не удалось извлечь username из Telegram: {url}")
-            return None
-        run_input = {"channelUsername": username}
-    elif actor_name == "apify/odnoklassniki-scraper":
-        run_input = {"groupUrls": [url]}
-    elif actor_name == "apify/pinterest-scraper":
-        run_input = {"profileUrls": [url]}
-    else:
-        run_input = {"startUrls": [{"url": url}]}
+    run_input = _build_run_input(actor_name, url, client_name)
+    if run_input is None:
+        return None
 
     # Запускаем актор с ретраями
     client = ApifyClient(token=APIFY_API_TOKEN)
     last_error = None
 
-    for attempt in range(1, MAX_RETRIES + 2):  # +2 потому что MAX_RETRIES — это повторы
+    for attempt in range(1, MAX_RETRIES + 2):
         try:
             if attempt > 1:
                 logger.info(
@@ -136,10 +135,7 @@ def fetch_followers(url: str, client_name: str) -> int | None:
                 )
                 time.sleep(REQUEST_DELAY * attempt)
 
-            # Запускаем актор
             run = client.actor(actor_name).call(run_input=run_input)
-
-            # Ждём результат
             dataset = client.dataset(run["defaultDatasetId"])
             items = dataset.list_items().items
 
@@ -149,25 +145,14 @@ def fetch_followers(url: str, client_name: str) -> int | None:
                 )
                 return None
 
-            # Ищем нужное поле
-            for item in items:
-                # Пробуем разные варианты названий полей
-                for key_variant in [field_name, "followersCount", "subscribersCount",
-                                    "subscriberCount", "followerCount",
-                                    "fansCount", "totalFollowers",
-                                    "membersCount", "totalMembers"]:
-                    val = item.get(key_variant)
-                    if val is not None:
-                        return int(val)
+            # Ищем количество подписчиков в первом результате
+            result = _find_followers_in_item(items[0], field_name)
+            if result is not None:
+                logger.info(f"[{client_name}] {platform_key}: {result:,} подписчиков")
+                return result
 
-                # Если не нашли — возьмём первое числовое поле
-                for key, val in item.items():
-                    if isinstance(val, (int, float)) and val > 0:
-                        return int(val)
-
-            # Ничего не нашли
             logger.warning(
-                f"[{client_name}] В ответе {actor_name} нет поля {field_name}"
+                f"[{client_name}] В ответе {actor_name} нет поля с подписчиками"
             )
             return None
 
@@ -183,6 +168,53 @@ def fetch_followers(url: str, client_name: str) -> int | None:
         f"[{client_name}] Все попытки исчерпаны для {url}: {last_error}"
     )
     return None
+
+
+def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None:
+    """Строит run_input для конкретного Apify актора."""
+
+    if actor_name == "apify/instagram-profile-scraper":
+        username = _extract_instagram_username(url)
+        if not username:
+            logger.warning(f"[{client_name}] Не удалось извлечь username из Instagram: {url}")
+            return None
+        return {"usernames": [username]}
+
+    if actor_name == "streamers/youtube-scraper":
+        return {
+            "startUrls": [{"url": url}],
+            "maxResults": 1,
+            "maxVideos": 1,
+            "maxShorts": 0,
+            "maxLiveStreams": 0,
+        }
+
+    if actor_name == "clockworks/tiktok-profile-scraper":
+        username = _extract_tiktok_username(url)
+        if not username:
+            logger.warning(f"[{client_name}] Не удалось извлечь username из TikTok: {url}")
+            return None
+        return {"profiles": [username]}
+
+    if actor_name == "apify/facebook-pages-scraper":
+        return {"pageUrls": [url]}
+
+    if "apify/web-scraper" in actor_name:
+        return {
+            "pageFunction": (
+                "async function pageFunction(context) {"
+                '  const $ = context.jQuery;'
+                "  return {"
+                "    url: context.request.url,"
+                "    title: $('title').text()"
+                "  };"
+                "}"
+            ),
+            "startUrls": [{"url": url}],
+        }
+
+    # Фолбэк
+    return {"startUrls": [{"url": url}]}
 
 
 def _extract_instagram_username(url: str) -> str | None:
@@ -203,27 +235,4 @@ def _extract_tiktok_username(url: str) -> str | None:
     for part in parts:
         if part.startswith("@"):
             return part[1:].split("?")[0]
-    return None
-
-
-def _extract_vk_screenname(url: str) -> str | None:
-    """Извлекает screen_name из VK URL."""
-    parsed = urlparse(url)
-    path = parsed.path.strip("/")
-    parts = path.split("/")
-    if parts and parts[0]:
-        return parts[0]
-    return None
-
-
-def _extract_telegram_username(url: str) -> str | None:
-    """Извлекает username из Telegram URL."""
-    parsed = urlparse(url)
-    path = parsed.path.strip("/")
-    parts = path.split("/")
-    # Убираем префикс #
-    for part in parts:
-        clean = part.lstrip("#")
-        if clean and clean != "k":
-            return clean.split("?")[0]
     return None

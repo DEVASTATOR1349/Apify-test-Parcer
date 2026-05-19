@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY .env ./
-COPY service-account.json ./
+
 
 # Папка для логов
 RUN mkdir -p /app/logs

@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
-      - ./service-account.json:/app/service-account.json:ro
+
     env_file:
       - .env
     environment:

@@ -9,10 +9,9 @@ load_dotenv()
 # === Apify ===
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 
-# === Google Sheets ===
+# === Apps Script (Google Sheets bridge) ===
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-GOOGLE_SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # === Парсер ===
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
@@ -33,57 +32,57 @@ PLATFORM_ACTORS = {
         "field": "followersCount",
     },
     "youtube.com": {
-        "actor": "apify/youtube-scraper",
-        "field": "subscriberCount",
+        "actor": "streamers/youtube-scraper",
+        "field": "numberOfSubscribers",  # поле на видео (subscriberCount отсутствует)
     },
     "tiktok.com": {
         "actor": "clockworks/tiktok-profile-scraper",
-        "field": "followersCount",
+        "field": "authorMeta.fans",  # authorMeta: {fans, following, heart, video}
     },
     "vk.com": {
-        "actor": "apify/vk-community-stats",
-        "field": "membersCount",
+        "actor": None,  # нет работающего Apify актора (все 404)
+        "field": None,
     },
     "facebook.com": {
         "actor": "apify/facebook-pages-scraper",
         "field": "followersCount",
     },
     "ok.ru": {
-        "actor": "apify/odnoklassniki-scraper",
-        "field": "followersCount",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "dzen.ru": {
-        "actor": "apify/web-scraper",  # через веб-скрейпинг если нет готового
-        "field": "subscribers",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "rutube.ru": {
-        "actor": "apify/web-scraper",
-        "field": "subscribers",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "t.me": {
-        "actor": "apify/telegram-channel-scraper",
-        "field": "subscribers",
+        "actor": None,  # нет работающего Apify актора (все 404)
+        "field": None,
     },
     "pinterest.com": {
-        "actor": "apify/pinterest-scraper",
-        "field": "followersCount",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "x.com":
     {
-        "actor": "apify/twitter-scraper",
-        "field": "followersCount",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "twitter.com": {
-        "actor": "apify/twitter-scraper",
-        "field": "followersCount",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
     "snapchat.com": {
         "actor": None,  # Snapchat пока не парсим
         "field": None,
     },
     "likee.video": {
-        "actor": "apify/web-scraper",
-        "field": "followersCount",
+        "actor": None,  # нет работающего Apify актора
+        "field": None,
     },
 }
 
