@@ -22,18 +22,19 @@ TEST_MODE = os.getenv("TEST_MODE", "").lower() in ("1", "true", "yes")
 
 # === Apps Script (Google Sheets bridge) ===
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
-# Таблица-источник (читаем «БазуКлиентов»)
-SOURCE_SHEET_ID = os.getenv("SOURCE_SHEET_ID", "1j98FzWldWKJmnn22QNuTsraMMwhVMRijemsEOif8RI0")
-# Таблица-приёмник (пишем результаты + ошибки)
-TARGET_SHEET_ID = os.getenv("TARGET_SHEET_ID", "10S1xijZ4ZNXVB4JQKyBylFmc7N_jwazHKSTc9pNj-t8")
+# Таблица: читаем «ВсеИсточники» и пишем результаты в неё же
+SHEET_ID = os.getenv("SHEET_ID", "10S1xijZ4ZNXVB4JQKyBylFmc7N_jwazHKSTc9pNj-t8")
+# Обратная совместимость
+SOURCE_SHEET_ID = os.getenv("SOURCE_SHEET_ID", SHEET_ID)
+TARGET_SHEET_ID = os.getenv("TARGET_SHEET_ID", SHEET_ID)
 
 # === Парсер ===
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
 
 # === Листы в Google Sheets ===
-# Лист «БазаКлиентов»: 3 колонки (Клиент, Источник, ссылка)
-SHEET_LINKS_GID = 21085774
+# Лист «ВсеИсточники»: 3 ключевые колонки (Клиент, Источник, Ссылка)
+SHEET_LINKS_GID = 425357122
 # Лист куда пишем результаты
 SHEET_RESULTS_TAB = "ДанныеПарсинга"
 # Лист для лога ошибок
@@ -100,7 +101,7 @@ PLATFORM_ACTORS = {
     },
 }
 
-# Маппинг названий из «БазаКлиентов» → ключ платформы
+# Маппинг названий из «ВсеИсточники» → ключ платформы
 SOURCE_NAME_MAP = {
     "Instagram": "instagram.com",
     "Instagram1": "instagram.com",

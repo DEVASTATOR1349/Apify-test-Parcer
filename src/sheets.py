@@ -63,15 +63,15 @@ def _fetch_viz_data(gid: int = 0) -> dict | None:
 
 def read_links_sheet() -> list[dict[str, Any]]:
     """
-    Читает «БазуКлиентов» (gid=21085774) через Google Visualization API.
-    Формат: 3 колонки — Клиент, Источник, ссылка.
+    Читает «ВсеИсточники» (gid=425357122) через Google Visualization API.
+    Формат: 3 ключевые колонки — Клиент, Источник, Ссылка.
     Возвращает [{"name": "ВсеСвои", "links": ["https://...", ...]}, ...]
     """
     import json
 
     raw = _fetch_viz_data(gid=SHEET_LINKS_GID)
     if not raw:
-        logger.error("Не удалось получить данные из таблицы (БазаКлиентов)")
+        logger.error("Не удалось получить данные из таблицы (ВсеИсточники)")
         return []
 
     try:
@@ -82,7 +82,7 @@ def read_links_sheet() -> list[dict[str, Any]]:
 
     rows = data.get("table", {}).get("rows", [])
     if not rows:
-        logger.warning("Нет данных в «БазеКлиентов»")
+        logger.warning("Нет данных в «ВсеИсточники»")
         return []
 
     projects: dict[str, list[str]] = {}
@@ -113,7 +113,7 @@ def read_links_sheet() -> list[dict[str, Any]]:
 
     result = [{"name": k, "links": v} for k, v in projects.items()]
     logger.info(
-        f"«БазаКлиентов»: {len(result)} проектов, "
+        f"«ВсеИсточники»: {len(result)} проектов, "
         f"всего {sum(len(p['links']) for p in result)} ссылок"
     )
     for p in result:
