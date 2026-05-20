@@ -26,7 +26,7 @@ COPY .env ./
 RUN mkdir -p /app/logs
 
 # Настройка cron (запуск каждый день в 5:00 UTC = 8:00 МСК)
-RUN echo "0 5 * * * cd /app && python src/main.py >> /app/logs/cron.log 2>&1" > /etc/cron.d/parser-cron
+RUN echo "0 5 * * * cd /app && /usr/local/bin/python src/main.py >> /app/logs/cron.log 2>&1" > /etc/cron.d/parser-cron
 RUN chmod 0644 /etc/cron.d/parser-cron
 RUN crontab /etc/cron.d/parser-cron
 
