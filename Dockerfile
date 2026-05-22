@@ -22,6 +22,9 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY .env ./
 
+# Сервисный ключ Google Sheets API
+COPY eva-bot-api-key.json /app/eva-bot-api-key.json
+
 # Папка для логов
 RUN mkdir -p /app/logs
 

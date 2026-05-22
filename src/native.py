@@ -249,6 +249,13 @@ def dzen_subscribers(url: str, client_name: str) -> int | None:
             text = page.inner_text('body')
             text_clean = text.replace('\u00a0', ' ').replace('\n', ' ')
 
+            # "Нет подписчиков" → 0
+            if re.search(r'(?:Нет|нет|0)\s+(?:подписчик|читател|подписчиков|читателей)', text_clean, re.I):
+                count = 0
+                DZEN_CACHE[url] = count
+                browser.close()
+                return count
+
             # "X подписчиков" / "X читателей"
             m = re.search(r'(\d[\d\s,.]*(?:\d|тыс\.?|млн\.?)?)\s*(?:подписчик|читател|подписчиков|читателей|subscriber|follower)', text_clean, re.I)
             if m:

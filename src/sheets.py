@@ -1,44 +1,55 @@
-"""Работа с Google Sheets: чтение через Visualization API, запись через Apps Script.
-
-Все записи идут одним POST-запросом (батч), чтобы не упираться в лимиты Google.
+"""Работа с Google Sheets:
+- Чтение «ВсеИсточники» через Google Visualization API (без авторизации)
+- Запись результатов напрямую через Google Sheets API (сервисный аккаунт)
 """
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
+import google.oauth2.service_account
+import googleapiclient.discovery
 import requests
 from loguru import logger
 
-from config import APPS_SCRIPT_URL, SOURCE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
+from config import SOURCE_SHEET_ID, SHEET_LINKS_GID, SOURCE_NAME_MAP
+
+# ID целевой таблицы (куда пишем результаты) и диапазон
+RESULTS_SHEET_ID = "10S1xijZ4ZNXVB4JQKyBylFmc7N_jwazHKSTc9pNj-t8"
+RESULTS_TAB = "ДанныеПарсинга"
+ERRORS_TAB = "Ошибки"
+
+# Путь к JSON-ключу сервисного аккаунта
+_KEY_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "/app/eva-bot-api-key.json")
+_CREDS: google.oauth2.service_account.Credentials | None = None
+_SERVICE: Any = None  # googleapiclient.discovery.Resource
 
 
-def _post(data: dict) -> bool:
-    """Отправляет POST в Apps Script."""
-    if not APPS_SCRIPT_URL:
-        logger.error("APPS_SCRIPT_URL не задан!")
-        return False
-
+def _get_service():
+    global _CREDS, _SERVICE
+    if _SERVICE is not None:
+        return _SERVICE
     try:
-        resp = requests.post(
-            APPS_SCRIPT_URL, json=data, timeout=60
+        _CREDS = google.oauth2.service_account.Credentials.from_service_account_file(
+            _KEY_PATH,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
-        text = resp.text.strip()
-        if resp.status_code == 200 and text == "OK":
-            return True
-        else:
-            logger.warning(
-                f"Apps Script ответил: {resp.status_code} {text[:200]}"
-            )
-            return False
-    except requests.RequestException as e:
-        logger.error(f"Ошибка отправки в Apps Script: {e}")
-        return False
+        _SERVICE = googleapiclient.discovery.build("sheets", "v4", credentials=_CREDS)
+        logger.info("Google Sheets API: подключён")
+        return _SERVICE
+    except Exception as e:
+        logger.error(f"Google Sheets API: ошибка подключения — {e}")
+        return None
 
+
+# ---------------------------------------------------------------------------
+# Чтение через Visualization API (без авторизации)
+# ---------------------------------------------------------------------------
 
 def _fetch_viz_data(gid: int = 0) -> dict | None:
-    """Читает данные через Google Visualization API (работает без авторизации)."""
     url = (
         f"https://docs.google.com/spreadsheets/d/{SOURCE_SHEET_ID}"
         f"/gviz/tq?tqx=out:json&gid={gid}"
@@ -47,40 +58,24 @@ def _fetch_viz_data(gid: int = 0) -> dict | None:
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         content = resp.text
-
         marker = "google.visualization.Query.setResponse("
         start = content.index(marker) + len(marker)
         end = content.rindex(")")
-        return content[start:end] if marker in content else None
+        inner = content[start:end]
+        return json.loads(inner) if inner else None
     except Exception as e:
         logger.warning(f"Visualization API error: {e}")
         return None
 
 
-# ---------------------------------------------------------------------------
-# Чтение «БазыКлиентов»
-# ---------------------------------------------------------------------------
-
 def read_links_sheet() -> list[dict[str, Any]]:
-    """
-    Читает «ВсеИсточники» (gid=425357122) через Google Visualization API.
-    Формат: 3 ключевые колонки — Клиент, Источник, Ссылка.
-    Возвращает [{"name": "ВсеСвои", "links": ["https://...", ...]}, ...]
-    """
-    import json
-
+    """Читает «ВсеИсточники» (gid=425357122)."""
     raw = _fetch_viz_data(gid=SHEET_LINKS_GID)
     if not raw:
         logger.error("Не удалось получить данные из таблицы (ВсеИсточники)")
         return []
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка парсинга JSON: {e}")
-        return []
-
-    rows = data.get("table", {}).get("rows", [])
+    rows = raw.get("table", {}).get("rows", [])
     if not rows:
         logger.warning("Нет данных в «ВсеИсточники»")
         return []
@@ -90,9 +85,9 @@ def read_links_sheet() -> list[dict[str, Any]]:
 
     for row in rows[1:]:
         vals = [c.get("v") if c else None for c in row["c"]]
-        client = (vals[0] or "").strip()
-        source = (vals[1] or "").strip()
-        url = (vals[2] or "").strip()
+        client = (vals[0] or "").strip() if len(vals) > 0 else ""
+        source = (vals[1] or "").strip() if len(vals) > 1 else ""
+        url = (vals[2] or "").strip() if len(vals) > 2 else ""
 
         if not client or not url:
             continue
@@ -104,9 +99,7 @@ def read_links_sheet() -> list[dict[str, Any]]:
             skipped_sources.add(source)
             continue
 
-        if client not in projects:
-            projects[client] = []
-        projects[client].append(url)
+        projects.setdefault(client, []).append(url)
 
     if skipped_sources:
         logger.debug(f"Пропущенные источники: {', '.join(sorted(skipped_sources))}")
@@ -116,18 +109,55 @@ def read_links_sheet() -> list[dict[str, Any]]:
         f"«ВсеИсточники»: {len(result)} проектов, "
         f"всего {sum(len(p['links']) for p in result)} ссылок"
     )
-    for p in result:
-        logger.debug(f"  {p['name']}: {len(p['links'])} ссылок")
-
     return result
 
 
 # ---------------------------------------------------------------------------
-# Батч-запись результатов
+# Запись через Google Sheets API (сервисный аккаунт)
 # ---------------------------------------------------------------------------
 
+def _append_rows(tab_name: str, rows: list[list[str]], header: list[str] | None = None) -> bool:
+    """Дописывает строки в конец листа. Если листа нет — создаёт."""
+    svc = _get_service()
+    if not svc:
+        return False
+
+    try:
+        # Проверяем существование листа
+        meta = svc.spreadsheets().get(spreadsheetId=RESULTS_SHEET_ID).execute()
+        sheet_names = [s["properties"]["title"] for s in meta.get("sheets", [])]
+
+        if tab_name not in sheet_names:
+            # Создаём лист
+            svc.spreadsheets().batchUpdate(
+                spreadsheetId=RESULTS_SHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
+            ).execute()
+            if header:
+                svc.spreadsheets().values().append(
+                    spreadsheetId=RESULTS_SHEET_ID,
+                    range=f"{tab_name}!A1",
+                    valueInputOption="RAW",
+                    body={"values": [header]},
+                ).execute()
+            logger.info(f"Создан лист «{tab_name}»")
+
+        # Дописываем данные
+        svc.spreadsheets().values().append(
+            spreadsheetId=RESULTS_SHEET_ID,
+            range=f"{tab_name}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": rows},
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Google Sheets API: ошибка записи в «{tab_name}» — {e}")
+        return False
+
+
 def write_results(results: list[dict[str, Any]]):
-    """Пишет результаты в лист «Статистика SQL» (Дата, Клиент, Площадка, Подписчиков)."""
+    """Пишет результаты в лист «ДанныеПарсинга»."""
     if not results:
         logger.info("Нет данных для записи")
         return
@@ -141,42 +171,29 @@ def write_results(results: list[dict[str, Any]]):
         ]
         for r in results
     ]
-    ok = _post({"type": "batch_write", "rows": rows, "tab": "ДанныеПарсинга"})
+    ok = _append_rows(RESULTS_TAB, rows, header=["Дата", "Клиент", "Площадка", "Подписчиков"])
     if ok:
-        logger.info(f"Записано: {len(rows)} строк в «ДанныеПарсинга»")
+        logger.info(f"Записано: {len(rows)} строк в «{RESULTS_TAB}»")
     else:
         logger.error(f"Не удалось записать {len(rows)} строк")
 
 
 def log_errors_batch(errors: list[dict[str, str]]):
-    """Пишет ошибки одним POST в лист «Ошибки»."""
+    """Пишет ошибки в лист «Ошибки»."""
     if not errors:
         return
-    ok = _post({
-        "type": "batch_errors",
-        "rows": [
-            [e["date"], e["client"], e["link"], e["error"]]
-            for e in errors
-        ],
-    })
+    rows = [
+        [e["date"], e["client"], e["link"], e["error"]]
+        for e in errors
+    ]
+    ok = _append_rows(ERRORS_TAB, rows, header=["Дата", "Клиент", "Ссылка", "Ошибка"])
     if ok:
         logger.info(f"Записано ошибок: {len(errors)}")
     else:
         logger.warning(f"Не удалось записать {len(errors)} ошибок")
 
 
-# ---------------------------------------------------------------------------
-# Старый интерфейс (для совместимости)
-# ---------------------------------------------------------------------------
-
 def log_error(client: str, link: str, error: str):
-    """Однострочная запись ошибки."""
+    """Однострочная запись ошибки (совместимость)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    _post({
-        "type": "error",
-        "date": today,
-        "client": client,
-        "link": link,
-        "error": error[:200],
-    })
-    logger.warning(f"Ошибка записана: {client} / {error[:100]}")
+    log_errors_batch([{"date": today, "client": client, "link": link, "error": error[:200]}])
