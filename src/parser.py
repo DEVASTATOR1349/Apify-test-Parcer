@@ -11,6 +11,7 @@ from loguru import logger
 from config import (
     APIFY_API_TOKEN,
     APIFY_API_TOKEN_BACKUP,
+    APIFY_API_TOKEN_NEW,
     MAX_RETRIES,
     PLATFORM_ACTORS,
     PLATFORM_NAMES,
@@ -38,6 +39,9 @@ def _detect_platform(url: str) -> str | None:
         domain = domain.split(":")[0]
     if domain in PLATFORM_ACTORS:
         return domain
+    # vk.ru → VK (зеркало)
+    if domain == "vk.ru":
+        return "vk.ru"
     if domain == "pin.it":
         return "pinterest.com"
     for key in PLATFORM_ACTORS:
@@ -95,6 +99,7 @@ def _find_followers_in_item(item: dict, field_name: str) -> int | None:
 # ──────────────────────────────────────────────────
 _NATIVE_HANDLERS = {
     "vk.com": vk_followers,
+    "vk.ru": vk_followers,  # зеркало VK
     "youtube.com": youtube_subscribers,
     "rutube.ru": rutube_subscribers,
     "ok.ru": ok_subscribers,
@@ -149,6 +154,8 @@ def _fetch_via_apify(actor_name: str, field_name: str | None,
     tokens_to_try = [APIFY_API_TOKEN]
     if APIFY_API_TOKEN_BACKUP:
         tokens_to_try.append(APIFY_API_TOKEN_BACKUP)
+    if APIFY_API_TOKEN_NEW:
+        tokens_to_try.append(APIFY_API_TOKEN_NEW)
 
     last_error = None
     for token_index, token in enumerate(tokens_to_try):
@@ -193,7 +200,278 @@ def _fetch_via_apify(actor_name: str, field_name: str | None,
 
 
 # ═══════════════════════════════════════════════
-# Apify run_input builders
+# Grouped (batch) fetching — 1 Apify запуск на платформу
+# ═══════════════════════════════════════════════
+
+
+def batch_fetch_all(
+    platform_groups: dict[str, list[tuple[str, str]]],
+) -> dict[str, int | None]:
+    """Групповой парсинг: 1 запрос на платформу вместо N отдельных.
+
+    Args:
+        platform_groups: {platform_key: [(client_name, url), ...]}
+
+    Returns: {url: followers_count | None}
+    """
+    results: dict[str, int | None] = {}
+
+    for platform_key, items in platform_groups.items():
+        platform_config = PLATFORM_ACTORS.get(platform_key)
+        if not platform_config:
+            for _, url in items:
+                results[url] = None
+            continue
+
+        actor_name = platform_config.get("actor")
+        field_name = platform_config.get("field")
+
+        # ── Нет актора ──
+        if actor_name is None:
+            for _, url in items:
+                results[url] = None
+                logger.info(f"Нет парсера: {platform_key}")
+            continue
+
+        # ── Нативные API (дешёвые, по одному) ──
+        if actor_name == "native":
+            handler = _NATIVE_HANDLERS.get(platform_key)
+            if handler:
+                for name, url in items:
+                    try:
+                        count = handler(url, name)
+                        results[url] = count
+                        if count is not None:
+                            logger.info(f"[{name}] {platform_key}: {count:,} подписчиков")
+                        else:
+                            logger.warning(f"[{name}] native {platform_key}: не удалось")
+                    except Exception as e:
+                        logger.warning(f"[{name}] native {platform_key} error: {e}")
+                        results[url] = None
+            else:
+                for _, url in items:
+                    results[url] = None
+            continue
+
+        # ── Facebook profile.php → Playwright (native) ──
+        if actor_name == "apify/facebook-pages-scraper":
+            # Разделяем: profile.php → native, остальное → Apify batch
+            normal_urls = []
+            php_urls = []
+            for name, url in items:
+                if "profile.php" in url:
+                    php_urls.append((name, url))
+                else:
+                    normal_urls.append((name, url))
+
+            # Native для profile.php
+            handler = _NATIVE_HANDLERS.get("facebook.com")
+            if handler and php_urls:
+                for name, url in php_urls:
+                    results[url] = _safe_native(handler, url, name)
+            else:
+                for _, url in php_urls:
+                    results[url] = None
+
+            # Apify batch для остальных
+            if normal_urls:
+                urls_only = [u for _, u in normal_urls]
+                batch_results = _batch_run_apify(
+                    actor_name, field_name, urls_only, platform_key
+                )
+                for name, url in normal_urls:
+                    results[url] = _match_url_in_batch(url, batch_results, actor_name, field_name)
+            continue
+
+        # ── Остальные Apify акторы с batch-поддержкой ──
+        urls_only = [u for _, u in items]
+
+        # Пробуем batch
+        run_input = _build_batch_run_input(actor_name, urls_only)
+        if run_input is not None:
+            batch_results = _batch_run_apify(
+                actor_name, field_name, urls_only, platform_key, run_input=run_input
+            )
+            for _, url in items:
+                results[url] = _match_url_in_batch(url, batch_results, actor_name, field_name)
+        else:
+            # fallback: по одному
+            for name, url in items:
+                results[url] = _fetch_via_apify(actor_name, field_name, url, platform_key, name)
+
+    return results
+
+
+def _batch_run_apify(
+    actor_name: str,
+    field_name: str | None,
+    urls: list[str],
+    platform_key: str,
+    run_input: dict | None = None,
+) -> list[dict]:
+    """Запуск Apify актора с групповым input. Возвращает список items."""
+    if run_input is None:
+        run_input = _build_batch_run_input(actor_name, urls)
+    if run_input is None:
+        return []
+
+    tokens = [t for t in [APIFY_API_TOKEN, APIFY_API_TOKEN_BACKUP, APIFY_API_TOKEN_NEW] if t]
+
+    for token_index, token in enumerate(tokens):
+        if token_index > 0:
+            logger.info(f"[{platform_key}] Переключаюсь на резервный Apify-токен...")
+        client = ApifyClient(token=token)
+
+        last_err_msg = ""
+        for attempt in range(1, MAX_RETRIES + 2):
+            try:
+                if attempt > 1:
+                    logger.info(f"[{platform_key}] Попытка #{attempt}...")
+                    time.sleep(REQUEST_DELAY * attempt)
+
+                run = client.actor(actor_name).call(run_input=run_input)
+                dataset = client.dataset(run["defaultDatasetId"])
+                return list(dataset.list_items().items)
+
+            except Exception as e:
+                last_err_msg = str(e)
+                logger.warning(f"[{platform_key}] Ошибка #{attempt}: {last_err_msg[:120]}")
+                if "limit exceeded" in last_err_msg.lower():
+                    break
+                if attempt <= MAX_RETRIES:
+                    continue
+
+        # Если ошибка "requires full access", не долбим остальные токены
+        if "requires full access" in last_err_msg.lower():
+            break
+
+    return []
+
+
+def _build_batch_run_input(actor_name: str, urls: list[str]) -> dict | None:
+    """Построить input для batch-запуска (несколько URL в 1 запрос)."""
+    if actor_name == "apify/instagram-profile-scraper":
+        usernames = []
+        for url in urls:
+            u = _extract_instagram_username(url)
+            if u:
+                usernames.append(u)
+        if not usernames:
+            return None
+        # Убираем дубликаты, сохраняя порядок
+        seen = set()
+        unique = []
+        for u in usernames:
+            if u not in seen:
+                seen.add(u)
+                unique.append(u)
+        return {"usernames": unique}
+
+    if actor_name == "clockworks/tiktok-profile-scraper":
+        profiles = []
+        for url in urls:
+            u = _extract_tiktok_username(url)
+            if u:
+                profiles.append(u)
+        if not profiles:
+            return None
+        seen = set()
+        unique = []
+        for u in profiles:
+            if u not in seen:
+                seen.add(u)
+                unique.append(u)
+        return {
+            "profiles": unique,
+            "shouldDownloadCovers": False,
+            "shouldDownloadSlideshowImages": False,
+            "shouldDownloadSubtitles": False,
+            "shouldDownloadVideos": False,
+            "maxPosts": 1,
+            "resultsPerPage": 1,
+        }
+
+    if actor_name == "apify/facebook-pages-scraper":
+        return {"startUrls": [{"url": url} for url in urls], "resultsLimit": 1}
+
+    if "pinterest" in actor_name:
+        return {"startUrls": [{"url": url} for url in urls]}
+
+    if actor_name == "apify/puppeteer-scraper":
+        return {
+            "pageFunction": (
+                "async function pageFunction(context) {"
+                "  const { page } = context;"
+                "  await page.waitForTimeout(3000);"
+                "  const r = await page.evaluate(() => {"
+                "    const el = document.querySelector('[data-test-id=\"subscribers-count\"]');"
+                "    if (el) return { subscribers: parseInt(el.textContent.replace(/[^0-9]/g, '')) };"
+                "    const txt = document.body.innerText;"
+                "    const m = txt.match(/(\\d[\\d\\s]*)\\s*(?:подписчик|subscriber|follower)/i);"
+                "    if (m) return { subscribers: parseInt(m[1].replace(/\\s/g, '')) };"
+                "    return { subscribers: 0, raw: txt.slice(0, 500) };"
+                "  }); return r; }"
+            ),
+            "startUrls": [{"url": url} for url in urls],
+            "maxPagesPerCrawl": len(urls),
+            "maxResultsPerCrawl": len(urls),
+            "proxyConfiguration": {"useApifyProxy": True},
+        }
+
+    return None  # нельзя забатчить
+
+
+def _match_url_in_batch(
+    target_url: str,
+    batch_items: list[dict],
+    actor_name: str,
+    field_name: str | None,
+) -> int | None:
+    """Найти результат для target_url среди batch_items."""
+    for item in batch_items:
+        # Прямое совпадение URL
+        for key in ("url", "inputUrl", "pageUrl", "input_url", "page_url"):
+            val = item.get(key)
+            if val and (val == target_url or val.rstrip("/") == target_url.rstrip("/")):
+                return _find_followers_in_item(item, field_name or "")
+
+    # Совпадение по username
+    for item in batch_items:
+        username = item.get("username")
+        if username and username.lower() in target_url.lower():
+            return _find_followers_in_item(item, field_name or "")
+
+        # TikTok: authorMeta.uniqueId
+        author = item.get("authorMeta", {}) or {}
+        if isinstance(author, dict):
+            uid = author.get("uniqueId") or author.get("name", "")
+            if uid and uid.lower() in target_url.lower():
+                return _find_followers_in_item(item, field_name or "")
+
+        # Pinterest: username из URL
+        if "pinterest" in actor_name:
+            username = item.get("username")
+            if username and username.lower() in target_url.lower():
+                return _find_followers_in_item(item, field_name or "")
+
+    # Если не нашли, возвращаем первый результат как fallback
+    if batch_items:
+        return _find_followers_in_item(batch_items[0], field_name or "")
+
+    return None
+
+
+def _safe_native(handler, url: str, name: str) -> int | None:
+    """Безопасный вызов native-обработчика."""
+    try:
+        return handler(url, name)
+    except Exception as e:
+        logger.warning(f"[{name}] native error: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════
+# Apify run_input builders (single URL — legacy / fallback)
 # ═══════════════════════════════════════════════
 
 def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None:
@@ -213,14 +491,13 @@ def _build_run_input(actor_name: str, url: str, client_name: str) -> dict | None
             "shouldDownloadSlideshowImages": False,
             "shouldDownloadSubtitles": False,
             "shouldDownloadVideos": False,
-            "maxPosts": 1,          # не скрейпим все видео, только 1
+            "maxPosts": 1,
             "resultsPerPage": 1,
         }
 
     if actor_name == "apify/facebook-pages-scraper":
         if "profile.php" in url:
-            logger.info(f"[{client_name}] Пропуск Facebook-профиля: {url[:60]}...")
-            return None
+            return None  # → native
         return {"startUrls": [{"url": url}], "resultsLimit": 1}
 
     if actor_name == "apify/puppeteer-scraper":

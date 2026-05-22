@@ -251,7 +251,13 @@ def ok_subscribers(url: str, client_name: str) -> int | None:
             if m:
                 return int(m.group(1).replace(" ", ""))
 
-        # В meta теге
+        # Для профилей — проверяем HTML на "друзья" / "followers" в JSON
+        for pat in [r'"friendsCount":\s*?(\d+)', r'"followers_count":\s*?(\d+)']:
+            m = re.search(pat, text)
+            if m:
+                return int(m.group(1))
+
+        # В meta теге (и группы, и профили)
         m = re.search(r'<meta[^>]+content="(\d+)\s*(?:участник|подписчик)', text)
         if m:
             return int(m.group(1))

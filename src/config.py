@@ -24,6 +24,7 @@ TEST_MODE = os.getenv("TEST_MODE", "").lower() in ("1", "true", "yes")
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 # Таблица: читаем «ВсеИсточники» и пишем результаты в неё же
 SHEET_ID = os.getenv("SHEET_ID", "10S1xijZ4ZNXVB4JQKyBylFmc7N_jwazHKSTc9pNj-t8")
+APIFY_API_TOKEN_NEW = os.getenv("APIFY_API_TOKEN_NEW")
 # Обратная совместимость
 SOURCE_SHEET_ID = os.getenv("SOURCE_SHEET_ID", SHEET_ID)
 TARGET_SHEET_ID = os.getenv("TARGET_SHEET_ID", SHEET_ID)
@@ -58,6 +59,10 @@ PLATFORM_ACTORS = {
         "actor": "native",  # VK API
         "field": "members_count",
     },
+    "vk.ru": {
+        "actor": "native",  # VK API (зеркало)
+        "field": "members_count",
+    },
     "facebook.com": {
         "actor": "apify/facebook-pages-scraper",  # 1 запрос, без логина для публичных страниц
         "field": "followers",
@@ -79,11 +84,10 @@ PLATFORM_ACTORS = {
         "field": None,
     },
     "pinterest.com": {
-        "actor": "native",  # JSON-LD парсинг
-        "field": "followerCount",
+        "actor": "scrapium/pinterest-profile-scraper",  # проверенный Apify Pinterest
+        "field": "follower_count",
     },
-    "x.com":
-    {
+    "x.com": {
         "actor": None,  # нет работающего Apify актора
         "field": None,
     },
@@ -112,6 +116,8 @@ SOURCE_NAME_MAP = {
     "Tiktok": "tiktok.com",
     "TikTok": "tiktok.com",
     "VK": "vk.com",
+    "VK.RU": "vk.ru",
+    "Vk.ru": "vk.ru",
     "Telegram": "t.me",
     "Rutube": "rutube.ru",
     "Odnoklassniki": "ok.ru",
@@ -133,6 +139,7 @@ PLATFORM_NAMES = {
     "youtube.com": "YouTube",
     "tiktok.com": "TikTok",
     "vk.com": "VK",
+    "vk.ru": "VK",
     "facebook.com": "Facebook",
     "ok.ru": "OK",
     "dzen.ru": "Дзен",

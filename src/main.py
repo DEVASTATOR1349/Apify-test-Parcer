@@ -25,7 +25,7 @@ logger.add(
 
 from config import TEST_MODE
 from sheets import read_links_sheet, write_results, log_errors_batch
-from parser import fetch_followers, get_platform_name, _detect_platform
+from parser import get_platform_name, _detect_platform, batch_fetch_all
 
 
 def run():
@@ -88,30 +88,48 @@ def _run_test(projects, today):
 
 
 def _run_full(projects, today):
-    """Полный прогон по всем ссылкам."""
-    all_results = []
-    all_errors = []
+    """Полный прогон по всем ссылкам с батчингом по платформам."""
     total_links = sum(len(p["links"]) for p in projects)
     logger.info(f"Проектов: {len(projects)}, ссылок: {total_links}")
 
-    processed = 0
+    # ── Группируем ссылки по платформе ──
+    platform_groups: dict[str, list[tuple[str, str]]] = {}
+    url_to_project: dict[str, str] = {}
+
     for project in projects:
         name = project["name"]
-        links = project["links"]
-        logger.info(f"\n--- {name} ({len(links)} площадок) ---")
+        for link in project["links"]:
+            pk = _detect_platform(link)
+            if pk:
+                platform_groups.setdefault(pk, []).append((name, link))
+                url_to_project[link] = name
+            else:
+                url_to_project[link] = name
 
-        for link in links:
-            processed += 1
-            logger.info(f"[{processed}/{total_links}] {name} → {link[:70]}...")
+    logger.info(f"Платформ: {len(platform_groups)}")
+    for pk, items in sorted(platform_groups.items()):
+        logger.info(f"  {pk}: {len(items)} ссылок")
+    logger.info("")
+
+    # ── Батч-парсинг ──
+    batch_results: dict[str, int | None] = batch_fetch_all(platform_groups)
+
+    # ── Собираем результаты ──
+    all_results = []
+    all_errors = []
+
+    for project in projects:
+        name = project["name"]
+        for link in project["links"]:
             platform_name = get_platform_name(link)
-            followers = fetch_followers(link, name)
+            followers = batch_results.get(link)
 
             if followers is not None:
                 all_results.append({
                     "date": today, "client": name,
                     "platform": platform_name, "followers": str(followers),
                 })
-                logger.success(f"  ✅ {platform_name}: {followers} подписчиков")
+                logger.success(f"  ✅ {name} → {platform_name}: {followers} подписчиков")
             else:
                 all_errors.append({
                     "date": today, "client": name,
