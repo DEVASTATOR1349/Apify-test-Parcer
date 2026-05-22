@@ -269,43 +269,59 @@ def dzen_subscribers(url: str, client_name: str) -> int | None:
 # OK (Одноклассники)
 # ──────────────────────────────────────────────────
 def ok_subscribers(url: str, client_name: str) -> int | None:
-    """OK через парсинг страницы группы."""
+    """OK: Playwright → парсинг membersCount/followersCount из React SPA."""
+    SyncPlaywright = _fb_playwright()
+
     try:
-        r = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }, timeout=15)
-        if r.status_code != 200:
-            return None
+        with SyncPlaywright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--single-process',
+                ]
+            )
+            ctx = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+            )
+            page = ctx.new_page()
+            page.goto(url, timeout=20000, wait_until='domcontentloaded')
+            page.wait_for_timeout(4000)
 
-        text = r.text
-        # Ищем подписчиков в meta/JSON-LD или span
-        # Шаблоны: "members_count":123, "subscribers":123, "membersCount"
-        for pattern in [
-            r'"membersCount"\s*:\s*(\d+)',
-            r'"members_count"\s*:\s*(\d+)',
-            r'"subscribers"\s*:\s*(\d+)',
-            r'(\d[\d\s]*)\s*(?:участник|подписчик|участников|подписчиков)',
-        ]:
-            m = re.search(pattern, text)
+            text = page.inner_text('body')
+            text_clean = text.replace('\u00a0', ' ').replace('\n', ' ')
+
+            # "X участников" / "X подписчиков"
+            m = re.search(r'(\d[\d\s,.]*(?:\d|тыс\.?|млн\.?)?)\s*(?:участник|подписчик|участников|подписчиков|subscriber|member)', text_clean, re.I)
             if m:
-                return int(m.group(1).replace(" ", ""))
+                count = _fb_parse_count(m.group(1).replace(' ', '').strip())
+                browser.close()
+                return count
 
-        # Для профилей — проверяем HTML на "друзья" / "followers" в JSON
-        for pat in [r'"friendsCount":\s*?(\d+)', r'"followers_count":\s*?(\d+)']:
-            m = re.search(pat, text)
-            if m:
-                return int(m.group(1))
+            # Ищем в JSON/скриптах
+            page_content = page.content()
+            for pat in [
+                r'"membersCount"\s*:\s*(\d+)',
+                r'"members_count"\s*:\s*(\d+)',
+                r'"friendsCount"\s*:\s*(\d+)',
+                r'"followersCount"\s*:\s*(\d+)',
+                r'"subscribers"\s*:\s*(\d+)',
+            ]:
+                m = re.search(pat, page_content)
+                if m:
+                    count = int(m.group(1))
+                    browser.close()
+                    return count
 
-        # В meta теге (и группы, и профили)
-        m = re.search(r'<meta[^>]+content="(\d+)\s*(?:участник|подписчик)', text)
-        if m:
-            return int(m.group(1))
+            browser.close()
 
     except Exception as e:
-        logger.warning(f"[{client_name}] OK error: {e}")
+        logger.warning(f"[{client_name}] OK Playwright error: {str(e)[:150]}")
 
     return None
-
 
 # ──────────────────────────────────────────────────
 # Facebook (Playwright через российский прокси)
