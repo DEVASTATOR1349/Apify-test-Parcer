@@ -72,7 +72,7 @@ PLATFORM_ACTORS = {
         "field": "membersCount",
     },
     "dzen.ru": {
-        "actor": "apify/puppeteer-scraper",  # будет заменён на свой актор
+        "actor": "native",  # Playwright (React SPA)
         "field": "subscribers",
     },
     "rutube.ru": {
@@ -84,7 +84,7 @@ PLATFORM_ACTORS = {
         "field": None,
     },
     "pinterest.com": {
-        "actor": "scrapium/pinterest-profile-scraper",  # проверенный Apify Pinterest
+        "actor": "native",  # Playwright (React SPA)
         "field": "follower_count",
     },
     "x.com": {

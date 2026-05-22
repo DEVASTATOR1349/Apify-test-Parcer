@@ -216,15 +216,54 @@ def _rutube_extract_id(url: str) -> str | None:
 
 
 # ──────────────────────────────────────────────────
-# Дзен
+# Дзен — Playwright
 # ──────────────────────────────────────────────────
-def dzen_subscribers(url: str, client_name: str) -> int | None:
-    """Дзен через парсинг страницы (нужен JS-рендер — через Web Scraper Apify)."""
-    # Без браузера не получить — Дзен SPA на React
-    # Оставляем на Apify puppeteer-scraper или свой актор
-    logger.info(f"[{client_name}] Дзен требует JS-рендер — используй Apify")
-    return None
+DZEN_CACHE: dict[str, int | None] = {}
 
+def dzen_subscribers(url: str, client_name: str) -> int | None:
+    """Дзен: Playwright → парсинг subscriber count из React SPA."""
+    if url in DZEN_CACHE:
+        return DZEN_CACHE[url]
+
+    SyncPlaywright = _fb_playwright()
+
+    try:
+        with SyncPlaywright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--single-process',
+                ]
+            )
+            ctx = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+            )
+            page = ctx.new_page()
+            page.goto(url, timeout=20000, wait_until='domcontentloaded')
+            page.wait_for_timeout(4000)
+
+            text = page.inner_text('body')
+            text_clean = text.replace('\u00a0', ' ').replace('\n', ' ')
+
+            # "X подписчиков" / "X читателей"
+            m = re.search(r'(\d[\d\s,.]*(?:\d|тыс\.?|млн\.?)?)\s*(?:подписчик|читател|подписчиков|читателей|subscriber|follower)', text_clean, re.I)
+            if m:
+                count = _fb_parse_count(m.group(1).replace(' ', '').strip())
+                DZEN_CACHE[url] = count
+                browser.close()
+                return count
+
+            browser.close()
+
+    except Exception as e:
+        logger.warning(f"[{client_name}] Дзен Playwright error: {str(e)[:150]}")
+
+    DZEN_CACHE[url] = None
+    return None
 
 # ──────────────────────────────────────────────────
 # OK (Одноклассники)
@@ -360,46 +399,69 @@ def facebook_followers(url: str, client_name: str) -> int | None:
 
 
 # ──────────────────────────────────────────────────
-# Pinterest (JSON-LD)
+# Pinterest — Playwright
 # ──────────────────────────────────────────────────
+PIN_CACHE: dict[str, int | None] = {}
+
 def pinterest_followers(url: str, client_name: str) -> int | None:
-    """Pinterest: фолловим pin.it редирект, парсим HTML."""
+    """Pinterest: Playwright → парсинг follower_count из React SPA профиля."""
+    if url in PIN_CACHE:
+        return PIN_CACHE[url]
+
+    SyncPlaywright = _fb_playwright()
+
     try:
-        # pin.it → редирект на реальный профиль
-        if "pin.it" in url:
-            r = requests.head(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }, allow_redirects=True, timeout=15)
-            url = r.url  # Идём по редиректу
+        with SyncPlaywright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--single-process',
+                ]
+            )
+            ctx = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+            )
+            page = ctx.new_page()
+            page.goto(url, timeout=20000, wait_until='domcontentloaded')
+            page.wait_for_timeout(4000)
 
-        r = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }, timeout=15)
-        if r.status_code != 200:
-            return None
+            text = page.inner_text('body')
+            text_clean = text.replace('\u00a0', ' ')
 
-        # Ищем JSON-LD
-        text = r.text
-        m = re.search(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', text, re.DOTALL)
-        if m:
-            data = json.loads(m.group(1))
-            if isinstance(data, dict):
-                for key in ("interactionStatistic", "followersCount", "followers"):
-                    v = _get_nested_or(data, key)
-                    if v is not None:
-                        return int(v)
-
-        # Ищем followerCount / follower_count в HTML
-        for pat in [r'"follower_count"\s*:\s*(\d+)', r'"followerCount"\s*:\s*(\d+)', r'"followersCount"\s*:\s*(\d+)']:
-            m = re.search(pat, text)
+            # English: "X followers" / Russian: "X подписчик"
+            m = re.search(r'([\d,]+(?:[.,]\d+)?\s*(?:k|K|m|M|тыс\.?|млн\.?)?)\s*(?:followers|подписчик|подписчиков|follower)', text_clean, re.I)
             if m:
-                return int(m.group(1))
+                count = _fb_parse_count(m.group(1).replace(',', '').strip())
+                PIN_CACHE[url] = count
+                browser.close()
+                return count
+
+            # Ищем во всех script/json блоках follower_count
+            page_content = page.content()
+            for pat in [
+                r'"follower_count"\s*:\s*(\d+)',
+                r'"followerCount"\s*:\s*(\d+)',
+                r'"followersCount"\s*:\s*(\d+)',
+                r'"totalFollowers"\s*:\s*(\d+)',
+            ]:
+                m = re.search(pat, page_content)
+                if m:
+                    count = int(m.group(1))
+                    PIN_CACHE[url] = count
+                    browser.close()
+                    return count
+
+            browser.close()
 
     except Exception as e:
-        logger.warning(f"[{client_name}] Pinterest error: {e}")
+        logger.warning(f"[{client_name}] Pinterest Playwright error: {str(e)[:150]}")
 
+    PIN_CACHE[url] = None
     return None
-
 
 def _get_nested_or(obj: dict, key: str):
     """Достаёт значение из вложенного словаря."""
